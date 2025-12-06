@@ -5,14 +5,16 @@
 package net.xmx.velgfx.neoforge;
 
 import net.neoforged.fml.common.Mod;
+import net.xmx.velgfx.renderer.VelGFX;
 
 /**
  * Main class for NeoForge integration.
  *
  * @author xI-Mx-Ix
  */
-@Mod("velgfx")
+@Mod(VelGFX.MODID)
 public final class VxNeoForge {
     public VxNeoForge() {
+        VelGFX.onClientInit();
     }
 }
