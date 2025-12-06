@@ -2,7 +2,9 @@
  * This file is part of VelGFX.
  * Licensed under LGPL 3.0.
  */
-package net.xmx.velgfx.renderer;
+package net.xmx.velgfx.renderer.util;
+
+import net.xmx.velgfx.renderer.VelGFX;
 
 import java.lang.reflect.Method;
 

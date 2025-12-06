@@ -2,11 +2,12 @@
  * This file is part of VelGFX.
  * Licensed under LGPL 3.0.
  */
-package net.xmx.velgfx.renderer.mesh.arena;
+package net.xmx.velgfx.renderer.mesh.impl;
 
-import net.xmx.velgfx.renderer.VxDrawCommand;
+import net.xmx.velgfx.renderer.gl.VxDrawCommand;
+import net.xmx.velgfx.renderer.gl.VxVertexLayout;
 import net.xmx.velgfx.renderer.mesh.VxAbstractRenderableMesh;
-import net.xmx.velgfx.renderer.mesh.VxVertexLayout;
+import net.xmx.velgfx.renderer.mesh.arena.VxArenaBuffer;
 
 import java.util.List;
 import java.util.Map;

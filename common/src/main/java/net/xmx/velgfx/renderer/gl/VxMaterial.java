@@ -2,9 +2,10 @@
  * This file is part of VelGFX.
  * Licensed under LGPL 3.0.
  */
-package net.xmx.velgfx.renderer;
+package net.xmx.velgfx.renderer.gl;
 
 import net.minecraft.resources.ResourceLocation;
+import net.xmx.velgfx.renderer.VelGFX;
 
 /**
  * Represents a PBR material with properties loaded from an MTL file.

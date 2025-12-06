@@ -2,7 +2,7 @@
  * This file is part of VelGFX.
  * Licensed under LGPL 3.0.
  */
-package net.xmx.velgfx.renderer;
+package net.xmx.velgfx.renderer.gl;
 
 /**
  * Represents a single, self-contained draw call for a portion of a mesh.

@@ -4,7 +4,7 @@
  */
 package net.xmx.velgfx.renderer.mesh;
 
-import net.xmx.velgfx.renderer.VxDrawCommand;
+import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 
 import java.nio.ByteBuffer;
 import java.util.Collections;

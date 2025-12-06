@@ -5,7 +5,7 @@
 package net.xmx.velgfx.renderer.model.parser;
 
 import net.minecraft.resources.ResourceLocation;
-import net.xmx.velgfx.renderer.VxMaterial;
+import net.xmx.velgfx.renderer.gl.VxMaterial;
 
 import java.io.BufferedReader;
 import java.io.IOException;
