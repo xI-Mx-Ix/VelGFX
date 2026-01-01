@@ -2,12 +2,12 @@
  * This file is part of VelGFX.
  * Licensed under LGPL 3.0.
  */
-package net.xmx.velgfx.renderer.mesh.impl;
+package net.xmx.velgfx.renderer.gl.mesh.impl;
 
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.VxVertexBuffer;
-import net.xmx.velgfx.renderer.mesh.VxAbstractRenderableMesh;
-import net.xmx.velgfx.renderer.mesh.VxMeshDefinition;
+import net.xmx.velgfx.renderer.gl.mesh.VxAbstractRenderableMesh;
+import net.xmx.velgfx.renderer.gl.mesh.VxMeshDefinition;
 
 import java.nio.ByteBuffer;
 

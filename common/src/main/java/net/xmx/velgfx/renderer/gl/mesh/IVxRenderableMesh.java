@@ -2,7 +2,7 @@
  * This file is part of VelGFX.
  * Licensed under LGPL 3.0.
  */
-package net.xmx.velgfx.renderer.mesh;
+package net.xmx.velgfx.renderer.gl.mesh;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 

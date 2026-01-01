@@ -6,11 +6,11 @@ package net.xmx.velgfx.renderer.model;
 
 import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
-import net.xmx.velgfx.renderer.mesh.IVxRenderableMesh;
-import net.xmx.velgfx.renderer.mesh.VxMeshDefinition;
-import net.xmx.velgfx.renderer.mesh.arena.VxArenaBuffer;
-import net.xmx.velgfx.renderer.mesh.impl.VxArenaMesh;
-import net.xmx.velgfx.renderer.mesh.impl.VxDedicatedMesh;
+import net.xmx.velgfx.renderer.gl.mesh.IVxRenderableMesh;
+import net.xmx.velgfx.renderer.gl.mesh.VxMeshDefinition;
+import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaBuffer;
+import net.xmx.velgfx.renderer.gl.mesh.impl.VxArenaMesh;
+import net.xmx.velgfx.renderer.gl.mesh.impl.VxDedicatedMesh;
 import net.xmx.velgfx.renderer.model.parser.VxObjParser;
 import net.xmx.velgfx.renderer.model.raw.VxRawModel;
 import net.xmx.velgfx.resources.VxResourceLocation;

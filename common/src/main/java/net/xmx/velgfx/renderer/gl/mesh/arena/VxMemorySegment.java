@@ -2,7 +2,7 @@
  * This file is part of VelGFX.
  * Licensed under LGPL 3.0.
  */
-package net.xmx.velgfx.renderer.mesh.arena;
+package net.xmx.velgfx.renderer.gl.mesh.arena;
 
 /**
  * Represents a contiguous segment of memory within the {@link VxArenaBuffer}.

@@ -2,14 +2,14 @@
  * This file is part of VelGFX.
  * Licensed under LGPL 3.0.
  */
-package net.xmx.velgfx.renderer.mesh.arena;
+package net.xmx.velgfx.renderer.gl.mesh.arena;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.VxVertexBuffer;
 import net.xmx.velgfx.renderer.gl.VxVertexLayout;
-import net.xmx.velgfx.renderer.mesh.VxMeshDefinition;
-import net.xmx.velgfx.renderer.mesh.impl.VxArenaMesh;
+import net.xmx.velgfx.renderer.gl.mesh.VxMeshDefinition;
+import net.xmx.velgfx.renderer.gl.mesh.impl.VxArenaMesh;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;

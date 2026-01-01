@@ -6,7 +6,7 @@ package net.xmx.velgfx.renderer.model;
 
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
-import net.xmx.velgfx.renderer.mesh.VxMeshDefinition;
+import net.xmx.velgfx.renderer.gl.mesh.VxMeshDefinition;
 import net.xmx.velgfx.renderer.model.generator.VxNormalGenerator;
 import net.xmx.velgfx.renderer.model.generator.VxTangentGenerator;
 import net.xmx.velgfx.renderer.model.raw.VxRawGroup;
