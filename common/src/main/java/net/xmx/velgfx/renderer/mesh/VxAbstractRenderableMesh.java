@@ -5,12 +5,8 @@
 package net.xmx.velgfx.renderer.mesh;
 
 import com.mojang.blaze3d.vertex.PoseStack;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.texture.AbstractTexture;
-import net.minecraft.client.renderer.texture.MissingTextureAtlasSprite;
-import net.minecraft.client.renderer.texture.TextureManager;
-import net.minecraft.resources.ResourceLocation;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
+import net.xmx.velgfx.resources.VxTextureLoader;
 
 import java.util.Collections;
 import java.util.List;
@@ -24,6 +20,9 @@ import java.util.Map;
  * <p>
  * It supports <b>Group Rendering</b>, allowing specific named subsets of the mesh to be
  * rendered independently (e.g., for animation) by creating lightweight proxy objects.
+ * <p>
+ * Updated to use {@link VxTextureLoader} for texture management, bypassing Minecraft's TextureManager
+ * constraints regarding file names.
  *
  * @author xI-Mx-Ix
  */
@@ -112,39 +111,21 @@ public abstract class VxAbstractRenderableMesh implements IVxRenderableMesh {
     /**
      * Initializes the OpenGL texture IDs for all materials used by this mesh.
      * <p>
-     * This method resolves the Albedo texture from disk via the Minecraft TextureManager
+     * This method resolves the Albedo texture from disk via the custom {@link VxTextureLoader}
      * and triggers the dynamic generation of LabPBR 1.3 textures via the material.
      */
     protected final void initializeTextures() {
-        TextureManager textureManager = Minecraft.getInstance().getTextureManager();
-
         for (VxDrawCommand command : this.allDrawCommands) {
             if (command.material != null) {
-                // 1. Resolve Albedo Texture (Load from Disk)
-                // Direct access via ResourceLocation is cleaner and safer than parsing Strings.
-                command.material.albedoMapGlId = getOrCreateTextureId(textureManager, command.material.albedoMap);
+                // 1. Resolve Albedo Texture (Load from Disk via Custom Loader)
+                // This bypasses Minecraft's ResourceLocation validation.
+                command.material.albedoMapGlId = VxTextureLoader.getTexture(command.material.albedoMap);
 
                 // 2. Generate PBR Textures (Dynamic LabPBR 1.3)
                 // Generates maps directly on GPU if not present.
                 command.material.ensureGenerated();
             }
         }
-    }
-
-    /**
-     * Retrieves the OpenGL texture ID for a given {@link ResourceLocation}.
-     *
-     * @param textureManager The game's texture manager.
-     * @param location       The resource location of the texture.
-     * @return The integer ID of the texture, or the ID of the missing texture if not found.
-     */
-    private int getOrCreateTextureId(TextureManager textureManager, ResourceLocation location) {
-        if (location == null) {
-            return textureManager.getTexture(MissingTextureAtlasSprite.getLocation()).getId();
-        }
-        textureManager.bindForSetup(location);
-        AbstractTexture texture = textureManager.getTexture(location);
-        return texture.getId();
     }
 
     // --- Abstract Methods used by the Render Queue ---

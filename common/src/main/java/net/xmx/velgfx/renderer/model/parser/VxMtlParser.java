@@ -4,13 +4,14 @@
  */
 package net.xmx.velgfx.renderer.model.parser;
 
-import net.minecraft.resources.ResourceLocation;
 import net.xmx.velgfx.renderer.gl.VxMaterial;
+import net.xmx.velgfx.resources.VxResourceLocation;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -18,8 +19,8 @@ import java.util.Map;
  * A parser for .mtl files that extracts PBR material properties.
  * <p>
  * This implementation parses raw paths from the MTL file and resolves them relative
- * to the OBJ model's directory. It performs no automatic folder injection, allowing
- * the MTL file to dictate the exact relative structure.
+ * to the OBJ model's directory using {@link VxResourceLocation}. It supports
+ * spaces in filenames and ignores common exporter flags (like -o).
  *
  * @author xI-Mx-Ix
  */
@@ -34,13 +35,14 @@ public class VxMtlParser {
      * with older software still render correctly with roughness and metallic properties.
      *
      * @param inputStream   The stream containing the .mtl file data.
-     * @param modelLocation The resource location of the parent .obj model.
+     * @param modelLocation The custom resource location of the parent .obj model.
      * @return A map of material names to their corresponding {@link VxMaterial} objects.
      * @throws IOException If an I/O error occurs.
      */
-    public static Map<String, VxMaterial> parse(InputStream inputStream, ResourceLocation modelLocation) throws IOException {
+    public static Map<String, VxMaterial> parse(InputStream inputStream, VxResourceLocation modelLocation) throws IOException {
         Map<String, VxMaterial> materials = new HashMap<>();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream))) {
+        // Use UTF-8 to ensure special characters in texture names are preserved
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
             String line;
             VxMaterial currentMaterial = null;
 
@@ -50,6 +52,8 @@ public class VxMtlParser {
                     continue;
                 }
 
+                // Split into exactly two parts: the keyword and the rest of the line.
+                // This preserves spaces in texture paths (e.g., "map_Kd Metal Chassis.png").
                 String[] parts = line.split("\\s+", 2);
                 if (parts.length < 2) continue;
 
@@ -81,7 +85,6 @@ public class VxMtlParser {
                     // 'Ns' represents the Specular Exponent (Shininess), typically ranging from 0 to 1000 in Blender.
                     // We convert this to PBR Roughness (0 to 1) using the Blinn-Phong to GGX approximation formula:
                     // Roughness = (2 / (Ns + 2))^0.25.
-                    // A high Ns (e.g., 250) results in a low roughness (smooth surface).
                     case "Ns" -> {
                         float shininess = parseFloat(data, 0.0f);
                         shininess = Math.max(0.0f, shininess);
@@ -89,7 +92,6 @@ public class VxMtlParser {
                     }
 
                     // 'Ks' represents the Specular Color.
-                    // In the Phong model, this defines the color of the highlight.
                     // For PBR, we use a simple heuristic: if the specular color is extremely bright (> 0.9),
                     // we assume the material is metallic. Otherwise, we default to dielectric (metallic = 0.0).
                     case "Ks" -> {
@@ -102,8 +104,12 @@ public class VxMtlParser {
                     }
 
                     // --- Texture Maps ---
-                    // Resolves the texture path relative to the OBJ file and stores it as a ResourceLocation.
-                    case "map_Kd" -> currentMaterial.albedoMap = resolveTexturePath(data, modelLocation);
+                    // Resolves the texture path relative to the OBJ file.
+                    case "map_Kd" -> {
+                        String cleanPath = stripTextureOptions(data);
+                        // Construct the location using the directory of the model as the base.
+                        currentMaterial.albedoMap = new VxResourceLocation(modelLocation.getDirectory(), cleanPath);
+                    }
                 }
             }
         }
@@ -111,8 +117,30 @@ public class VxMtlParser {
     }
 
     /**
+     * Removes exporter flags (like -o, -s) from the texture line string.
+     * <p>
+     * Some exporters format lines like {@code map_Kd -o 1.1 1.0 texture.png}.
+     * This method heuristically attempts to extract just the filename.
+     *
+     * @param data The line data after the keyword.
+     * @return The clean filename.
+     */
+    private static String stripTextureOptions(String data) {
+        // If data contains spaces, it might be "filename with spaces.png" OR "-o 1.1 1.1 filename.png"
+        // Heuristic: If it starts with '-', parse tokens. Otherwise assume full string is path.
+        if (data.startsWith("-")) {
+            String[] tokens = data.split("\\s+");
+            // Return the last token, assuming it is the filename.
+            // Note: This naive approach works for most standard Wavefront exporters.
+            return tokens[tokens.length - 1];
+        }
+        return data;
+    }
+
+    /**
      * Parses a string of color components (R G B) into a float array.
-     * @param data The string containing space-separated float values.
+     *
+     * @param data   The string containing space-separated float values.
      * @param target The float array (at least size 3) to store the result.
      */
     private static void parseColor(String data, float[] target) {
@@ -126,7 +154,8 @@ public class VxMtlParser {
 
     /**
      * Safely parses a float from a string, returning a default value on failure.
-     * @param s The string to parse.
+     *
+     * @param s            The string to parse.
      * @param defaultValue The value to return if parsing fails.
      * @return The parsed float or the default value.
      */
@@ -136,36 +165,5 @@ public class VxMtlParser {
         } catch (NumberFormatException e) {
             return defaultValue;
         }
-    }
-
-    /**
-     * Resolves a texture path relative to the model's directory.
-     *
-     * @param lineData      The raw data string from the MTL line.
-     * @param modelLocation The ResourceLocation of the OBJ model.
-     * @return A ResourceLocation pointing to the texture.
-     */
-    private static ResourceLocation resolveTexturePath(String lineData, ResourceLocation modelLocation) {
-        String[] tokens = lineData.trim().split("\\s+");
-
-        // Extract filename (last token containing a dot, ignoring flags)
-        String rawPath = tokens[tokens.length - 1];
-        for (int i = tokens.length - 1; i >= 0; i--) {
-            String t = tokens[i];
-            if (t.contains(".") && !t.startsWith("-")) {
-                rawPath = t;
-                break;
-            }
-        }
-
-        // Determine parent directory from the model location
-        String path = modelLocation.getPath();
-        String directory = "";
-        if (path.contains("/")) {
-            directory = path.substring(0, path.lastIndexOf('/') + 1);
-        }
-
-        // Construct resource location preserving the namespace
-        return modelLocation.withPath(directory + rawPath);
     }
 }

@@ -5,18 +5,18 @@
 package net.xmx.velgfx.renderer.model.parser;
 
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
-import net.minecraft.client.Minecraft;
-import net.minecraft.resources.ResourceLocation;
-import net.xmx.velgfx.renderer.gl.VxMaterial;
 import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.renderer.gl.VxMaterial;
 import net.xmx.velgfx.renderer.model.raw.VxRawGroup;
 import net.xmx.velgfx.renderer.model.raw.VxRawMesh;
 import net.xmx.velgfx.renderer.model.raw.VxRawModel;
+import net.xmx.velgfx.resources.VxResourceLocation;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 
 /**
@@ -24,19 +24,22 @@ import java.util.Map;
  * <p>
  * This parser extracts all geometry data into an editable format using a Structure-of-Arrays
  * approach for performance. It does not perform buffer flattening, but it does handle index parsing.
+ * <p>
+ * Updated to use {@link VxResourceLocation} for file loading, enabling support
+ * for non-standard file paths and bypassing Minecraft's Resource Manager constraints.
  *
  * @author xI-Mx-Ix
  */
 public class VxObjParser {
 
     /**
-     * Parses an OBJ model from a given {@link ResourceLocation}.
+     * Parses an OBJ model from a given {@link VxResourceLocation}.
      *
-     * @param location The location of the .obj file.
+     * @param location The custom location of the .obj file.
      * @return A {@link VxRawModel} containing the raw geometry data.
      * @throws IOException If the file cannot be read.
      */
-    public static VxRawModel parse(ResourceLocation location) throws IOException {
+    public static VxRawModel parse(VxResourceLocation location) throws IOException {
         VxRawModel rawModel = new VxRawModel();
 
         String defaultGroup = "default";
@@ -44,44 +47,65 @@ public class VxObjParser {
         String currentGroupName = defaultGroup;
         String currentMaterialName = defaultMaterial;
 
-        // Ensure default material exists
+        // Ensure default material exists in case the model has faces before any usemtl tag
         rawModel.materials.put(defaultMaterial, new VxMaterial(defaultMaterial));
 
-        try (InputStream stream = Minecraft.getInstance().getResourceManager().getResource(location).get().open();
-             BufferedReader reader = new BufferedReader(new InputStreamReader(stream))) {
+        // Load stream via ClassLoader path lookup (using / prefix for absolute classpath root)
+        String classpathPath = location.getPath().startsWith("/") ? location.getPath() : "/" + location.getPath();
 
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.isEmpty() || line.startsWith("#")) continue;
+        try (InputStream stream = VxObjParser.class.getResourceAsStream(classpathPath)) {
+            if (stream == null) {
+                throw new IOException("Model file not found in classpath: " + location);
+            }
 
-                String[] tokens = line.trim().split("\\s+");
-                if (tokens.length == 0) continue;
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (line.isEmpty() || line.startsWith("#")) continue;
 
-                String keyword = tokens[0];
+                    String[] tokens = line.trim().split("\\s+");
+                    if (tokens.length == 0) continue;
 
-                switch (keyword) {
-                    case "v" -> parseVertex(tokens, rawModel.positions, rawModel.colors);
-                    case "vt" -> parseVec2(tokens, rawModel.texCoords);
-                    case "vn" -> parseVec3(tokens, rawModel.normals);
-                    case "g", "o" -> {
-                        currentGroupName = tokens.length > 1 ? tokens[1] : defaultGroup;
-                    }
-                    case "usemtl" -> {
-                        currentMaterialName = tokens.length > 1 ? tokens[1] : defaultMaterial;
-                        rawModel.materials.computeIfAbsent(currentMaterialName, VxMaterial::new);
-                    }
-                    case "mtllib" -> {
-                        if (tokens.length > 1) {
-                            String mtlPath = resolveRelativePath(location, tokens[1]);
-                            Map<String, VxMaterial> loaded = loadMtl(location.withPath(mtlPath), location);
-                            rawModel.materials.putAll(loaded);
+                    String keyword = tokens[0];
+
+                    switch (keyword) {
+                        case "v" -> parseVertex(tokens, rawModel.positions, rawModel.colors);
+                        case "vt" -> parseVec2(tokens, rawModel.texCoords);
+                        case "vn" -> parseVec3(tokens, rawModel.normals);
+                        case "g", "o" -> {
+                            // Support group names with spaces by consuming the rest of the line
+                            if (tokens.length > 1) {
+                                // Extract substring starting from where the first token ends
+                                currentGroupName = line.substring(line.indexOf(tokens[1])).trim();
+                            } else {
+                                currentGroupName = defaultGroup;
+                            }
                         }
-                    }
-                    case "f" -> {
-                        VxRawGroup group = rawModel.getGroup(currentGroupName);
-                        // Get the flat index mesh for the current material
-                        VxRawMesh mesh = group.getMesh(currentMaterialName);
-                        parseFace(tokens, mesh);
+                        case "usemtl" -> {
+                            if (tokens.length > 1) {
+                                currentMaterialName = line.substring(line.indexOf(tokens[1])).trim();
+                                rawModel.materials.computeIfAbsent(currentMaterialName, VxMaterial::new);
+                            } else {
+                                currentMaterialName = defaultMaterial;
+                            }
+                        }
+                        case "mtllib" -> {
+                            if (tokens.length > 1) {
+                                // Extract the relative path to the MTL file (may contain spaces)
+                                String rawMtlPath = line.substring(line.indexOf(tokens[1])).trim();
+                                
+                                // Create a new location relative to the model's directory
+                                VxResourceLocation mtlLoc = new VxResourceLocation(location.getDirectory(), rawMtlPath);
+                                Map<String, VxMaterial> loaded = loadMtl(mtlLoc, location);
+                                rawModel.materials.putAll(loaded);
+                            }
+                        }
+                        case "f" -> {
+                            VxRawGroup group = rawModel.getGroup(currentGroupName);
+                            // Get the flat index mesh for the current material
+                            VxRawMesh mesh = group.getMesh(currentMaterialName);
+                            parseFace(tokens, mesh);
+                        }
                     }
                 }
             }
@@ -94,6 +118,7 @@ public class VxObjParser {
 
     /**
      * Parses a vertex line "v x y z [r g b]".
+     * Supports optional vertex colors which are not standard OBJ but supported by some extensions.
      */
     private static void parseVertex(String[] tokens, FloatArrayList pos, FloatArrayList cols) {
         pos.add(Float.parseFloat(tokens[1]));
@@ -117,7 +142,7 @@ public class VxObjParser {
     }
 
     /**
-     * Parses a UV line "vt u v". Inverts V for OpenGL.
+     * Parses a UV line "vt u v". Inverts V for OpenGL compatibility.
      */
     private static void parseVec2(String[] tokens, FloatArrayList list) {
         list.add(Float.parseFloat(tokens[1]));
@@ -125,7 +150,7 @@ public class VxObjParser {
     }
 
     /**
-     * Parses a face line "f v1/vt1/vn1 ...". Handles triangulation.
+     * Parses a face line "f v1/vt1/vn1 ...". Handles arbitrary polygons by triangulating them as a fan.
      */
     private static void parseFace(String[] tokens, VxRawMesh mesh) {
         int vertexCount = tokens.length - 1;
@@ -160,21 +185,21 @@ public class VxObjParser {
         }
     }
 
-    private static Map<String, VxMaterial> loadMtl(ResourceLocation mtlLocation, ResourceLocation modelLocation) {
-        try (InputStream stream = Minecraft.getInstance().getResourceManager().getResource(mtlLocation).get().open()) {
+    /**
+     * Loads and parses an MTL library from a relative path.
+     */
+    private static Map<String, VxMaterial> loadMtl(VxResourceLocation mtlLocation, VxResourceLocation modelLocation) {
+        String classpathPath = mtlLocation.getPath().startsWith("/") ? mtlLocation.getPath() : "/" + mtlLocation.getPath();
+
+        try (InputStream stream = VxObjParser.class.getResourceAsStream(classpathPath)) {
+            if (stream == null) {
+                VelGFX.LOGGER.warn("Material library not found: {}", mtlLocation);
+                return Map.of();
+            }
             return VxMtlParser.parse(stream, modelLocation);
         } catch (IOException e) {
-            VelGFX.LOGGER.warn("Could not load material library: {}", mtlLocation);
+            VelGFX.LOGGER.warn("Could not load material library: {}", mtlLocation, e);
             return Map.of();
         }
-    }
-
-    private static String resolveRelativePath(ResourceLocation modelLocation, String relativePath) {
-        String modelPath = modelLocation.getPath();
-        if (modelPath.contains("/")) {
-            String basePath = modelPath.substring(0, modelPath.lastIndexOf('/') + 1);
-            return basePath + relativePath;
-        }
-        return relativePath;
     }
 }

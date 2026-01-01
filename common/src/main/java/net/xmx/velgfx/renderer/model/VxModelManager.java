@@ -4,7 +4,6 @@
  */
 package net.xmx.velgfx.renderer.model;
 
-import net.minecraft.resources.ResourceLocation;
 import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.mesh.IVxRenderableMesh;
 import net.xmx.velgfx.renderer.mesh.VxMeshDefinition;
@@ -13,6 +12,8 @@ import net.xmx.velgfx.renderer.mesh.impl.VxArenaMesh;
 import net.xmx.velgfx.renderer.mesh.impl.VxDedicatedMesh;
 import net.xmx.velgfx.renderer.model.parser.VxObjParser;
 import net.xmx.velgfx.renderer.model.raw.VxRawModel;
+import net.xmx.velgfx.resources.VxResourceLocation;
+import net.xmx.velgfx.resources.VxTextureLoader;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -24,6 +25,9 @@ import java.util.Optional;
  * <p>
  * This class acts as the central hub for the entire model pipeline. It implements a multi-tiered
  * caching strategy to minimize disk I/O, CPU processing, and GPU memory allocation.
+ * <p>
+ * Updated to use {@link VxResourceLocation} keys instead of standard Minecraft ResourceLocations,
+ * allowing for arbitrary model and texture file names.
  * </p>
  * <h3>Pipeline Stages:</h3>
  * <ol>
@@ -47,26 +51,26 @@ public final class VxModelManager {
      * Cache for raw, structural model data.
      * This cache is checked first to avoid re-reading and re-parsing OBJ files from disk.
      */
-    private static final Map<ResourceLocation, VxRawModel> RAW_CACHE = new HashMap<>();
+    private static final Map<VxResourceLocation, VxRawModel> RAW_CACHE = new HashMap<>();
 
     /**
      * Cache for baked mesh definitions.
      * This cache stores the intermediate byte buffers before they are uploaded to the GPU.
      * It prevents re-calculating normals/tangents and re-interleaving data for models already processed.
      */
-    private static final Map<ResourceLocation, VxMeshDefinition> DEFINITION_CACHE = new HashMap<>();
+    private static final Map<VxResourceLocation, VxMeshDefinition> DEFINITION_CACHE = new HashMap<>();
 
     /**
      * Cache for standalone, dedicated GPU meshes.
      * These meshes own their own VBOs and are typically used for large or unique models.
      */
-    private static final Map<ResourceLocation, VxDedicatedMesh> STANDALONE_MESH_CACHE = new HashMap<>();
+    private static final Map<VxResourceLocation, VxDedicatedMesh> STANDALONE_MESH_CACHE = new HashMap<>();
 
     /**
      * Cache for sub-meshes allocated within the shared arena buffer.
      * These are lightweight handles used for rendering many small objects efficiently.
      */
-    private static final Map<ResourceLocation, VxArenaMesh> ARENA_SUB_MESH_CACHE = new HashMap<>();
+    private static final Map<VxResourceLocation, VxArenaMesh> ARENA_SUB_MESH_CACHE = new HashMap<>();
 
     /**
      * Private constructor to prevent instantiation of this static utility class.
@@ -74,23 +78,23 @@ public final class VxModelManager {
     private VxModelManager() {}
 
     /**
-     * Retrieves the raw, editable model data for a given resource.
+     * Retrieves the raw, editable model data for a given custom resource.
      * <p>
      * If the model is not in the cache, it will attempt to load and parse it from the file system.
      * This method is useful for game logic that needs to inspect model structure (e.g., getting the
      * position of a specific named group) without necessarily rendering it.
      *
-     * @param location The resource location of the OBJ file.
+     * @param location The custom resource location of the OBJ file.
      * @return An {@link Optional} containing the raw model data, or empty if loading failed.
      */
-    public static Optional<VxRawModel> getRawModel(ResourceLocation location) {
+    public static Optional<VxRawModel> getRawModel(VxResourceLocation location) {
         // 1. Check the L1 cache (Raw Data)
         VxRawModel cached = RAW_CACHE.get(location);
         if (cached != null) {
             return Optional.of(cached);
         }
 
-        // 2. Cache miss: Parse from disk
+        // 2. Cache miss: Parse from disk via classpath
         try {
             VxRawModel raw = VxObjParser.parse(location);
             RAW_CACHE.put(location, raw);
@@ -102,7 +106,7 @@ public final class VxModelManager {
     }
 
     /**
-     * Retrieves the GPU-ready mesh definition for a given resource.
+     * Retrieves the GPU-ready mesh definition for a given custom resource.
      * <p>
      * This method automatically handles the dependency chain:
      * <ul>
@@ -111,10 +115,10 @@ public final class VxModelManager {
      *     <li>Once the raw model is obtained, it "bakes" it via {@link VxModelBaker} to produce the definition.</li>
      * </ul>
      *
-     * @param location The resource location of the OBJ file.
+     * @param location The custom resource location of the OBJ file.
      * @return An {@link Optional} containing the baked mesh definition, or empty if the process failed.
      */
-    public static Optional<VxMeshDefinition> getDefinition(ResourceLocation location) {
+    public static Optional<VxMeshDefinition> getDefinition(VxResourceLocation location) {
         // 1. Check the L2 cache (Baked Definitions)
         VxMeshDefinition cached = DEFINITION_CACHE.get(location);
         if (cached != null) {
@@ -139,10 +143,10 @@ public final class VxModelManager {
      * <p>
      * Use this for complex models that are rendered individually or have specific isolation requirements.
      *
-     * @param location The resource location of the model.
+     * @param location The custom resource location of the model.
      * @return An {@link Optional} containing the dedicated mesh handle.
      */
-    public static Optional<VxDedicatedMesh> getStandaloneMesh(ResourceLocation location) {
+    public static Optional<VxDedicatedMesh> getStandaloneMesh(VxResourceLocation location) {
         // 1. Check the L3 cache (GPU Objects)
         VxDedicatedMesh cached = STANDALONE_MESH_CACHE.get(location);
         if (cached != null) {
@@ -169,10 +173,10 @@ public final class VxModelManager {
      * Use this for smaller, numerous models to reduce draw call overhead and state changes.
      * The manager handles allocation within the arena automatically.
      *
-     * @param location The resource location of the model.
+     * @param location The custom resource location of the model.
      * @return An {@link Optional} containing the arena mesh handle.
      */
-    public static Optional<VxArenaMesh> getArenaMesh(ResourceLocation location) {
+    public static Optional<VxArenaMesh> getArenaMesh(VxResourceLocation location) {
         // 1. Check the L3 cache (GPU Objects)
         VxArenaMesh cached = ARENA_SUB_MESH_CACHE.get(location);
         if (cached != null) {
@@ -206,6 +210,7 @@ public final class VxModelManager {
      *     <li>All CPU-side data (Raw models, Definitions) is discarded.</li>
      *     <li>All dedicated VBOs/VAOs are deleted via OpenGL.</li>
      *     <li>The shared Arena Buffer is destroyed and reset.</li>
+     *     <li>All loaded custom textures are deleted from GPU memory via the loader.</li>
      * </ul>
      */
     public static void clear() {
@@ -225,6 +230,9 @@ public final class VxModelManager {
 
         // 4. Destroy the global arena buffer (physically freeing the shared VBO)
         VxArenaBuffer.getInstance().delete();
+
+        // 5. Clear all custom textures loaded via VxTextureLoader
+        VxTextureLoader.clear();
 
         VelGFX.LOGGER.info("VelGFX model manager cleared successfully.");
     }

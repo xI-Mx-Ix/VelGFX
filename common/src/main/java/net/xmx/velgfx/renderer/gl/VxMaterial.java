@@ -4,8 +4,8 @@
  */
 package net.xmx.velgfx.renderer.gl;
 
-import net.minecraft.resources.ResourceLocation;
 import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.resources.VxResourceLocation;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.system.MemoryStack;
 
@@ -14,8 +14,8 @@ import java.nio.ByteBuffer;
 /**
  * Represents a PBR material defined by scalar properties and texture identifiers.
  * <p>
- * This class uses {@link ResourceLocation} for file-based textures (Albedo) to ensure
- * compatibility with Minecraft's resource manager, but utilizes direct OpenGL calls
+ * This class uses {@link VxResourceLocation} for file-based textures (Albedo) to ensure
+ * compatibility with custom file paths (spaces, uppercase), but utilizes direct OpenGL calls
  * for generated PBR maps (Normal/Specular) to maximize performance and avoid
  * object overhead.
  *
@@ -26,7 +26,7 @@ public class VxMaterial {
     /**
      * A default resource location pointing to a simple white texture.
      */
-    public static final ResourceLocation DEFAULT_WHITE = ResourceLocation.tryBuild(VelGFX.MODID, "renderer/white.png");
+    public static final VxResourceLocation DEFAULT_WHITE = new VxResourceLocation("assets/" + VelGFX.MODID + "/renderer/white.png");
 
     /**
      * The unique name of the material.
@@ -34,8 +34,8 @@ public class VxMaterial {
     public final String name;
 
     // --- Texture Maps ---
-    // Using ResourceLocation here is cleaner as it maps directly to an asset on disk.
-    public ResourceLocation albedoMap = DEFAULT_WHITE;
+    // Using VxResourceLocation here allows us to bypass Minecraft's restriction on characters.
+    public VxResourceLocation albedoMap = DEFAULT_WHITE;
 
     // --- OpenGL Texture IDs ---
     public int albedoMapGlId = -1;
