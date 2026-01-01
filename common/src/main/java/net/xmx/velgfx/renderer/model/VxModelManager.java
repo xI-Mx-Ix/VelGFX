@@ -5,6 +5,7 @@
 package net.xmx.velgfx.renderer.model;
 
 import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.renderer.gl.material.VxMaterial;
 import net.xmx.velgfx.renderer.mesh.IVxRenderableMesh;
 import net.xmx.velgfx.renderer.mesh.VxMeshDefinition;
 import net.xmx.velgfx.renderer.mesh.arena.VxArenaBuffer;
@@ -207,31 +208,34 @@ public final class VxModelManager {
      * This method is destructive and should typically be called during a full resource reload (F3+T)
      * or when the application is shutting down. It ensures that:
      * <ul>
-     *     <li>All CPU-side data (Raw models, Definitions) is discarded.</li>
-     *     <li>All dedicated VBOs/VAOs are deleted via OpenGL.</li>
-     *     <li>The shared Arena Buffer is destroyed and reset.</li>
-     *     <li>All loaded custom textures are deleted from GPU memory via the loader.</li>
+     *     <li>All {@link VxMaterial} generated textures are deleted.</li>
+     *     <li>All dedicated VBOs/VAOs are deleted.</li>
+     *     <li>The shared Arena Buffer is destroyed.</li>
+     *     <li>All custom textures loaded via {@link VxTextureLoader} are deleted.</li>
      * </ul>
      */
     public static void clear() {
         VelGFX.LOGGER.info("Clearing VelGFX model caches and GPU resources...");
 
-        // 1. Clear CPU-side raw data and definitions
+        // 1. Destroy raw models to free material PBR textures (Fixes Memory Leak)
+        RAW_CACHE.values().forEach(VxRawModel::destroy);
         RAW_CACHE.clear();
+
+        // 2. Clear definitions
         DEFINITION_CACHE.clear();
 
-        // 2. Delete all standalone GPU meshes and clear the map
+        // 3. Delete all standalone GPU meshes
         STANDALONE_MESH_CACHE.values().forEach(IVxRenderableMesh::delete);
         STANDALONE_MESH_CACHE.clear();
 
-        // 3. Delete all arena sub-mesh handles (logic-wise deletion)
+        // 4. Delete all arena sub-mesh handles
         ARENA_SUB_MESH_CACHE.values().forEach(VxArenaMesh::delete);
         ARENA_SUB_MESH_CACHE.clear();
 
-        // 4. Destroy the global arena buffer (physically freeing the shared VBO)
+        // 5. Destroy the global arena buffer
         VxArenaBuffer.getInstance().delete();
 
-        // 5. Clear all custom textures loaded via VxTextureLoader
+        // 6. Clear all custom textures loaded via VxTextureLoader
         VxTextureLoader.clear();
 
         VelGFX.LOGGER.info("VelGFX model manager cleared successfully.");

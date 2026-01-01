@@ -13,16 +13,14 @@ import java.util.Map;
 /**
  * Represents the raw, editable data of a 3D model in CPU memory.
  * <p>
- * Unlike the final MeshDefinition, this class exposes the structure of the model (vertices,
- * faces, groups) in a mutable way. This allows for logic-based manipulation or analysis
- * of the model before it is "baked" into a GPU-ready format.
+ * This class exposes the structure of the model (vertices, faces, groups) in a mutable way.
+ * It also manages the lifecycle of {@link VxMaterial} instances associated with this model.
  *
  * @author xI-Mx-Ix
  */
 public class VxRawModel {
 
     // --- Global Data Pools ---
-    // All groups share these pools to save memory and handle shared vertices.
     public final FloatArrayList positions = new FloatArrayList();
     public final FloatArrayList texCoords = new FloatArrayList();
     public final FloatArrayList normals = new FloatArrayList();
@@ -36,6 +34,7 @@ public class VxRawModel {
 
     /**
      * A registry of materials used by this model.
+     * These materials own generated OpenGL resources (normal/specular maps) that must be freed.
      */
     public final Map<String, VxMaterial> materials = new LinkedHashMap<>();
 
@@ -58,7 +57,6 @@ public class VxRawModel {
 
     /**
      * Calculates the total number of vertices required if this model were to be triangulated and flattened.
-     * Useful for buffer allocation.
      *
      * @return The vertex count.
      */
@@ -71,5 +69,26 @@ public class VxRawModel {
             }
         }
         return count;
+    }
+
+    /**
+     * Frees all GPU resources associated with this model's materials and clears CPU data.
+     * <p>
+     * This <b>must</b> be called when the model is evicted from the cache to prevent
+     * memory leaks of generated PBR textures.
+     */
+    public void destroy() {
+        // Free generated OpenGL textures in materials
+        for (VxMaterial material : materials.values()) {
+            material.delete();
+        }
+        materials.clear();
+
+        // Clear large data arrays to help GC
+        positions.clear();
+        texCoords.clear();
+        normals.clear();
+        colors.clear();
+        groups.clear();
     }
 }
