@@ -14,7 +14,7 @@ import net.minecraft.client.renderer.ShaderInstance;
 import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.VxGlState;
-import net.xmx.velgfx.renderer.gl.VxMaterial;
+import net.xmx.velgfx.renderer.gl.material.VxMaterial;
 import net.xmx.velgfx.renderer.util.VxShaderDetector;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;

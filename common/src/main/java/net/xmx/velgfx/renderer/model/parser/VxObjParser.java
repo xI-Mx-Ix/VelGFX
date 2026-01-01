@@ -6,7 +6,7 @@ package net.xmx.velgfx.renderer.model.parser;
 
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
 import net.xmx.velgfx.renderer.VelGFX;
-import net.xmx.velgfx.renderer.gl.VxMaterial;
+import net.xmx.velgfx.renderer.gl.material.VxMaterial;
 import net.xmx.velgfx.renderer.model.raw.VxRawGroup;
 import net.xmx.velgfx.renderer.model.raw.VxRawMesh;
 import net.xmx.velgfx.renderer.model.raw.VxRawModel;

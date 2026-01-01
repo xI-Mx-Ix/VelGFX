@@ -4,6 +4,8 @@
  */
 package net.xmx.velgfx.renderer.gl;
 
+import net.xmx.velgfx.renderer.gl.material.VxMaterial;
+
 /**
  * Represents a single, self-contained draw call for a portion of a mesh.
  * It specifies which vertices to draw and which material to apply.

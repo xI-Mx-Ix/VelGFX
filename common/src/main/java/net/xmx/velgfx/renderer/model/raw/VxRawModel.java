@@ -5,7 +5,7 @@
 package net.xmx.velgfx.renderer.model.raw;
 
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
-import net.xmx.velgfx.renderer.gl.VxMaterial;
+import net.xmx.velgfx.renderer.gl.material.VxMaterial;
 
 import java.util.LinkedHashMap;
 import java.util.Map;

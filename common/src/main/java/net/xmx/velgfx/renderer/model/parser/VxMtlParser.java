@@ -4,7 +4,7 @@
  */
 package net.xmx.velgfx.renderer.model.parser;
 
-import net.xmx.velgfx.renderer.gl.VxMaterial;
+import net.xmx.velgfx.renderer.gl.material.VxMaterial;
 import net.xmx.velgfx.resources.VxResourceLocation;
 
 import java.io.BufferedReader;
