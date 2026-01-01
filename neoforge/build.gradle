@@ -1,0 +1,110 @@
+plugins {
+    id 'com.gradleup.shadow'
+    id "com.hypherionmc.modutils.modpublisher"
+}
+
+loom {
+    runs {
+        server {
+            runDir "run-server"
+        }
+        client {
+            runDir "run-client"
+            programArgs '--username', 'dev'
+        }
+    }
+
+    accessWidenerPath = project(":common").loom.accessWidenerPath
+}
+
+architectury {
+    platformSetupLoomIde()
+    neoForge()
+}
+
+configurations {
+    common {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+    compileClasspath.extendsFrom common
+    runtimeClasspath.extendsFrom common
+    developmentNeoForge.extendsFrom common
+
+    shadowBundle {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+}
+
+repositories {
+    maven {
+        name = 'NeoForged'
+        url = 'https://maven.neoforged.net/releases'
+    }
+    mavenCentral()
+}
+
+dependencies {
+    neoForge "net.neoforged:neoforge:$rootProject.neoforge_version"
+
+    modImplementation "dev.architectury:architectury-neoforge:$rootProject.architectury_api_version"
+
+    common(project(path: ':common', configuration: 'namedElements')) { transitive false }
+    shadowBundle project(path: ':common', configuration: 'transformProductionNeoForge')
+}
+
+processResources {
+    var replaceProperties = [
+            minecraft_version: rootProject.minecraft_version,
+            minecraft_version_range: rootProject.minecraft_version_range,
+            neoforge_version: rootProject.neoforge_version,
+            neoforge_version_range: rootProject.neoforge_version_range,
+            loader_version_range: rootProject.loader_version_range,
+            mod_id: rootProject.mod_id,
+            mod_name: rootProject.mod_name,
+            mod_license: rootProject.mod_license,
+            mod_version: rootProject.mod_version,
+            mod_authors: rootProject.mod_authors,
+            mod_description: rootProject.mod_description,
+            architectury_api_version: rootProject.architectury_api_version
+    ]
+
+    inputs.properties replaceProperties
+
+    filesMatching(['META-INF/neoforge.mods.toml', 'pack.mcmeta']) {
+        expand replaceProperties + [project: project]
+    }
+}
+
+shadowJar {
+    configurations = [project.configurations.shadowBundle]
+    archiveClassifier = 'dev-shadow'
+}
+
+remapJar {
+    inputFile.set shadowJar.archiveFile
+}
+
+// Configures the sourcesJar task to include source code from the common module
+// ensuring that the resulting sources jar contains the full codebase.
+tasks.named("sourcesJar") {
+    def commonSources = project(":common").sourceSets.main.allSource
+    from commonSources
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            artifactId = base.archivesName.get()
+            from components.java
+
+            // Filters out development and shadow artifacts to reduce file size
+            // and ensure only the production jar is published.
+            artifacts.removeAll { artifact ->
+                artifact.classifier in ['dev', 'shadow', 'dev-shadow']
+            }
+        }
+    }
+}

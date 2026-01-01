@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${mod_version}",
+  "name": "${mod_name}",
+  "description": "${mod_description}",
+  "authors": [
+    "${mod_authors}"
+  ],
+  "license": "${mod_license}",
+  "icon": "assets/velgfx/velgfx_icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "net.xmx.velgfx.fabric.VxFabric"
+    ]
+  },
+  "mixins": [
+    "velgfx.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=${fabric_loader_version}",
+    "minecraft": "${minecraft_version_range}",
+    "java": ">=17",
+    "architectury": ">=${architectury_api_version}",
+    "fabric-api": ">=${fabric_api_version}"
+  },
+  "suggests": {
+    "another-mod": "*"
+  }
+}

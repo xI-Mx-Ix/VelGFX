@@ -1,0 +1,114 @@
+import net.fabricmc.loom.task.RemapJarTask
+
+plugins {
+    id 'dev.architectury.loom' version '1.10-SNAPSHOT' apply false
+    id 'architectury-plugin' version '3.4-SNAPSHOT'
+    id 'com.gradleup.shadow' version '8.3.6' apply false
+    id "com.hypherionmc.modutils.modpublisher" version "2.1.8" apply false
+}
+
+architectury {
+    minecraft = project.minecraft_version
+}
+
+allprojects {
+    group = rootProject.maven_group
+    version = rootProject.mod_version
+}
+
+def credentialsFile = file('credentials.properties')
+if (credentialsFile.exists()) {
+    def properties = new Properties()
+    credentialsFile.withInputStream { properties.load(it) }
+    ext.modrinth_token = properties.getProperty('modrinth_token')
+    ext.curseforge_token = properties.getProperty('curseforge_token')
+    ext.cloudsmith_user = properties.getProperty('cloudsmith_user')
+    ext.cloudsmith_key = properties.getProperty('cloudsmith_key')
+} else {
+    ext.modrinth_token = null
+    ext.curseforge_token = null
+    ext.cloudsmith_user = null
+    ext.cloudsmith_key = null
+}
+
+subprojects {
+    apply plugin: 'dev.architectury.loom'
+    apply plugin: 'architectury-plugin'
+    apply plugin: 'maven-publish'
+
+    def archiveMap = [
+            "fabric"    : "velgfx-fabric",
+            "forge"     : "velgfx-forge",
+            "neoforge"  : "velgfx-neoforge",
+            "common"    : "velgfx-common"
+    ]
+
+    base {
+        "$rootProject.archives_name-$project.name"
+    }
+
+    repositories {
+        mavenCentral()
+        maven { url = 'https://cursemaven.com'}
+        maven { url = 'https://maven.parchmentmc.org' }
+        maven { url = 'https://jitpack.io' }
+        maven { url = 'https://s01.oss.sonatype.org/content/repositories/snapshots'}
+    }
+
+    tasks.withType(RemapJarTask).configureEach {
+        if (project.name == 'common') {
+            addNestedDependencies = false
+        }
+    }
+
+    loom {
+        silentMojangMappingsLicense()
+
+        def refmaps = [
+                'common' : 'velgfx-refmap.json'
+        ]
+
+        refmaps.each { proj, refmap ->
+            if (project.name == proj) {
+                mixin.defaultRefmapName.set(refmap)
+            }
+        }
+    }
+
+    dependencies {
+        minecraft "net.minecraft:minecraft:$rootProject.minecraft_version"
+
+        mappings loom.layered {
+            officialMojangMappings()
+            parchment("org.parchmentmc.data:parchment-${minecraft_version}:${parchment_version}@zip")
+        }
+    }
+
+    java {
+        withSourcesJar()
+
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        it.options.release = 21
+    }
+
+    tasks.withType(GenerateModuleMetadata).configureEach {
+        enabled = false
+    }
+
+    publishing {
+        repositories {
+            maven {
+                name = "Cloudsmith"
+                url = "https://maven.cloudsmith.io/imx-dev/velgfx/"
+                credentials {
+                    username = rootProject.ext.cloudsmith_user
+                    password = rootProject.ext.cloudsmith_key
+                }
+            }
+        }
+    }
+}
