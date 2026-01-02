@@ -5,83 +5,90 @@
 package net.xmx.velgfx.renderer.gl.mesh;
 
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
+import net.xmx.velgfx.renderer.gl.layout.IVxVertexLayout;
 
 import java.nio.ByteBuffer;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
- * A complete, CPU-side description of a renderable mesh.
- *
- * <p>This class holds the raw vertex data and a structural organization of that data.
- * It supports named grouping, allowing specific parts of the model (defined by 'g' or 'o' tags
- * in the source file) to be accessed and rendered independently.</p>
+ * Represents the baked, GPU-ready definition of a mesh.
+ * <p>
+ * This class serves as the data transport between the {@link net.xmx.velgfx.renderer.model.loader.VxAssimpLoader}
+ * and the {@link net.xmx.velgfx.renderer.gl.VxVertexBuffer}. It contains the interleaved byte stream
+ * matching a specific {@link IVxVertexLayout}.
  *
  * @author xI-Mx-Ix
  */
 public class VxMeshDefinition {
-    private final ByteBuffer vertexData;
 
-    /**
-     * A flat list of all draw commands required to render the complete model.
-     */
-    public final List<VxDrawCommand> allDrawCommands;
-
-    /**
-     * A map linking raw group names (from the source model file) to their specific draw commands.
-     */
+    private final ByteBuffer interleavedData;
+    private final IVxVertexLayout layout;
+    private final List<VxDrawCommand> allDrawCommands;
     private final Map<String, List<VxDrawCommand>> groupDrawCommands;
 
     /**
-     * Constructs a new mesh definition.
+     * Constructs a new Mesh Definition.
      *
-     * @param vertexData        A direct ByteBuffer containing the interleaved vertex data.
-     * @param allDrawCommands   A list of commands describing how to render the entire mesh.
-     * @param groupDrawCommands A map associating group names with their specific subset of draw commands.
+     * @param interleavedData   The direct ByteBuffer containing vertex data packed according to the layout.
+     * @param layout            The vertex layout descriptor (Static or Skinned).
+     * @param allDrawCommands   The flat list of draw commands.
+     * @param groupDrawCommands The map of commands for specific model groups (nodes).
      */
-    public VxMeshDefinition(ByteBuffer vertexData, List<VxDrawCommand> allDrawCommands, Map<String, List<VxDrawCommand>> groupDrawCommands) {
-        this.vertexData = vertexData;
+    public VxMeshDefinition(ByteBuffer interleavedData,
+                            IVxVertexLayout layout,
+                            List<VxDrawCommand> allDrawCommands,
+                            Map<String, List<VxDrawCommand>> groupDrawCommands) {
+        this.interleavedData = interleavedData;
+        this.layout = layout;
         this.allDrawCommands = allDrawCommands;
-        this.groupDrawCommands = groupDrawCommands;
+        this.groupDrawCommands = groupDrawCommands != null ? groupDrawCommands : Collections.emptyMap();
     }
 
     /**
-     * Gets the vertex data buffer.
+     * Gets the interleaved vertex data.
      *
-     * @return A read-only view of the vertex buffer, ready for uploading.
+     * @return The direct ByteBuffer (read-only view recommended for consumers).
      */
-    public ByteBuffer getVertexData() {
-        return vertexData.asReadOnlyBuffer();
+    public ByteBuffer getData() {
+        return interleavedData;
     }
 
     /**
-     * Retrieves the list of draw commands associated with a specific group name.
+     * Gets the layout describing the data structure.
      *
-     * @param groupName The name of the group as defined in the source model file (case-sensitive).
-     * @return A list of draw commands for that group, or an empty list if the group does not exist.
+     * @return The vertex layout.
      */
-    public List<VxDrawCommand> getGroupParts(String groupName) {
-        return groupDrawCommands.getOrDefault(groupName, Collections.emptyList());
+    public IVxVertexLayout getLayout() {
+        return layout;
     }
 
     /**
-     * Retrieves the full map of group names to draw commands.
-     * Used by mesh implementations to store grouping logic.
+     * Gets the list of commands to render the full mesh.
      *
-     * @return The map of group draw commands.
+     * @return The list of draw commands.
+     */
+    public List<VxDrawCommand> getDrawCommands() {
+        return allDrawCommands;
+    }
+
+    /**
+     * Gets the map of group-specific draw commands.
+     *
+     * @return The group map.
      */
     public Map<String, List<VxDrawCommand>> getGroupDrawCommands() {
         return groupDrawCommands;
     }
 
     /**
-     * Returns a set of all group names available in this mesh.
+     * Calculates the number of vertices in this definition based on the layout stride.
      *
-     * @return A set of strings representing the group names.
+     * @return The vertex count.
      */
-    public Set<String> getAvailableGroups() {
-        return Collections.unmodifiableSet(groupDrawCommands.keySet());
+    public int getVertexCount() {
+        if (layout.getStride() == 0) return 0;
+        return interleavedData.remaining() / layout.getStride();
     }
 }

@@ -7,47 +7,48 @@ package net.xmx.velgfx.renderer.gl.mesh.impl;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.VxVertexBuffer;
 import net.xmx.velgfx.renderer.gl.mesh.VxAbstractRenderableMesh;
-import net.xmx.velgfx.renderer.gl.mesh.VxMeshDefinition;
 
 import java.nio.ByteBuffer;
+import java.util.Collections;
+import java.util.List;
 
 /**
- * A mesh that possesses its own dedicated Vertex Buffer Object (VBO).
+ * A renderable mesh that owns a dedicated Vertex Buffer Object (VBO).
  * <p>
- * This class replaces the old StandaloneMesh and utilizes the new {@link VxVertexBuffer} wrapper.
- * It is useful for large or frequently changing meshes that shouldn't share
- * the arena buffer, or when strict isolation is required.
+ * This implementation is used for static models where the geometry does not change
+ * frame-by-frame (unlike skinned meshes). It uploads the provided vertex data
+ * directly to GPU memory upon instantiation.
  *
  * @author xI-Mx-Ix
  */
 public class VxDedicatedMesh extends VxAbstractRenderableMesh {
 
     /**
-     * The dedicated vertex buffer instance containing the mesh data.
+     * The wrapper for the OpenGL VBO and VAO handles.
      */
     private final VxVertexBuffer vertexBuffer;
 
     /**
-     * Constructs a dedicated mesh from a generic mesh definition.
-     * Automatically uploads vertex data into a new VBO.
+     * Constructs a new dedicated mesh.
      *
-     * @param definition The mesh definition containing data and structure.
+     * @param vertexData      The interleaved vertex data (Direct Buffer).
+     * @param allDrawCommands The list of commands required to render this mesh.
      */
-    public VxDedicatedMesh(VxMeshDefinition definition) {
-        super(definition.allDrawCommands, definition.getGroupDrawCommands());
+    public VxDedicatedMesh(ByteBuffer vertexData, List<VxDrawCommand> allDrawCommands) {
+        // Static models delegate group handling to the VxStaticModel hierarchy,
+        // so we pass an empty map for group commands here to the base class.
+        super(allDrawCommands, Collections.emptyMap());
 
-        ByteBuffer data = definition.getVertexData();
-        // Create a dedicated buffer for this mesh with STATIC_DRAW usage (false for dynamic).
-        this.vertexBuffer = new VxVertexBuffer(data.remaining(), false);
-        this.vertexBuffer.uploadSubData(0, data);
+        // Allocate GPU memory and upload data (Static Draw)
+        this.vertexBuffer = new VxVertexBuffer(vertexData.remaining(), false);
+        this.vertexBuffer.uploadSubData(0, vertexData);
 
+        // Resolve and generate textures immediately
         initializeTextures();
     }
 
     /**
      * {@inheritDoc}
-     * <p>
-     * Binds the unique VBO/VAO associated with this mesh via the wrapper.
      */
     @Override
     public void setupVaoState() {
@@ -56,16 +57,15 @@ public class VxDedicatedMesh extends VxAbstractRenderableMesh {
 
     /**
      * {@inheritDoc}
-     * <p>
-     * Since this mesh owns the buffer starting at index 0, the final offset is just the command's local offset.
      */
     @Override
     public int getFinalVertexOffset(VxDrawCommand command) {
+        // Since this mesh owns the VBO exclusively, the offset is exactly what's in the command.
         return command.vertexOffset;
     }
 
     /**
-     * Deletes the dedicated GPU resources associated with this mesh.
+     * Releases the VBO and VAO associated with this mesh.
      */
     @Override
     public void delete() {

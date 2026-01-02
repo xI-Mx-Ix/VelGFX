@@ -5,239 +5,128 @@
 package net.xmx.velgfx.renderer.model;
 
 import net.xmx.velgfx.renderer.VelGFX;
-import net.xmx.velgfx.renderer.gl.material.VxMaterial;
-import net.xmx.velgfx.renderer.gl.mesh.IVxRenderableMesh;
-import net.xmx.velgfx.renderer.gl.mesh.VxMeshDefinition;
-import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaBuffer;
-import net.xmx.velgfx.renderer.gl.mesh.impl.VxArenaMesh;
-import net.xmx.velgfx.renderer.gl.mesh.impl.VxDedicatedMesh;
-import net.xmx.velgfx.renderer.model.parser.VxObjParser;
-import net.xmx.velgfx.renderer.model.raw.VxRawModel;
+import net.xmx.velgfx.renderer.gl.shader.VxSkinningShader;
+import net.xmx.velgfx.renderer.model.loader.VxAssimpLoader;
 import net.xmx.velgfx.resources.VxResourceLocation;
 import net.xmx.velgfx.resources.VxTextureLoader;
 
-import java.io.IOException;
+import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
 /**
- * A unified manager for loading, processing, and caching 3D models.
+ * Central manager for loading and caching 3D models.
  * <p>
- * This class acts as the central hub for the entire model pipeline. It implements a multi-tiered
- * caching strategy to minimize disk I/O, CPU processing, and GPU memory allocation.
+ * This class acts as a high-level factory for {@link VxStaticModel} and {@link VxSkinnedModel}.
+ * It delegates the file parsing to {@link VxAssimpLoader} and manages the lifecycle of
+ * shared GPU resources.
  * <p>
- * Updated to use {@link VxResourceLocation} keys instead of standard Minecraft ResourceLocations,
- * allowing for arbitrary model and texture file names.
- * </p>
- * <h3>Pipeline Stages:</h3>
- * <ol>
- *     <li><b>Raw Model (CPU - Editable):</b> The {@link VxRawModel} represents the parsed data from disk.
- *     It maps directly to the file structure (OBJ groups, faces) and allows for logic-based manipulation
- *     before rendering preparation.</li>
- *
- *     <li><b>Mesh Definition (CPU - Baked):</b> The {@link VxMeshDefinition} is the result of "baking" a raw model.
- *     This stage flattens the geometry into an interleaved buffer, calculates tangents, and generates
- *     render commands. It is optimized for upload but still resides in system RAM.</li>
- *
- *     <li><b>GPU Mesh (GPU - Renderable):</b> These are the final handles ({@link VxDedicatedMesh} or {@link VxArenaMesh})
- *     that point to actual OpenGL resources (VBOs/VAOs).</li>
- * </ol>
+ * <b>Supported Formats:</b> .obj, .fbx, .gltf, .glb, .dae (Collada), and others supported by Assimp.
  *
  * @author xI-Mx-Ix
  */
 public final class VxModelManager {
 
     /**
-     * Cache for raw, structural model data.
-     * This cache is checked first to avoid re-reading and re-parsing OBJ files from disk.
+     * Cache for loaded static models.
+     * Key: Resource Location.
      */
-    private static final Map<VxResourceLocation, VxRawModel> RAW_CACHE = new HashMap<>();
+    private static final Map<VxResourceLocation, VxStaticModel> STATIC_CACHE = new HashMap<>();
 
     /**
-     * Cache for baked mesh definitions.
-     * This cache stores the intermediate byte buffers before they are uploaded to the GPU.
-     * It prevents re-calculating normals/tangents and re-interleaving data for models already processed.
+     * Cache for loaded skinned models.
+     * Key: Resource Location.
      */
-    private static final Map<VxResourceLocation, VxMeshDefinition> DEFINITION_CACHE = new HashMap<>();
+    private static final Map<VxResourceLocation, VxSkinnedModel> SKINNED_CACHE = new HashMap<>();
 
-    /**
-     * Cache for standalone, dedicated GPU meshes.
-     * These meshes own their own VBOs and are typically used for large or unique models.
-     */
-    private static final Map<VxResourceLocation, VxDedicatedMesh> STANDALONE_MESH_CACHE = new HashMap<>();
-
-    /**
-     * Cache for sub-meshes allocated within the shared arena buffer.
-     * These are lightweight handles used for rendering many small objects efficiently.
-     */
-    private static final Map<VxResourceLocation, VxArenaMesh> ARENA_SUB_MESH_CACHE = new HashMap<>();
-
-    /**
-     * Private constructor to prevent instantiation of this static utility class.
-     */
     private VxModelManager() {}
 
     /**
-     * Retrieves the raw, editable model data for a given custom resource.
+     * Loads or retrieves a {@link VxStaticModel}.
      * <p>
-     * If the model is not in the cache, it will attempt to load and parse it from the file system.
-     * This method is useful for game logic that needs to inspect model structure (e.g., getting the
-     * position of a specific named group) without necessarily rendering it.
+     * Static models support rigid body animation (Node Hierarchy) but no vertex deformation.
+     * Ideal for machinery, vehicles, or architectural elements.
      *
-     * @param location The custom resource location of the OBJ file.
-     * @return An {@link Optional} containing the raw model data, or empty if loading failed.
+     * @param location The resource location of the model file.
+     * @return An optional containing the model if loaded successfully.
      */
-    public static Optional<VxRawModel> getRawModel(VxResourceLocation location) {
-        // 1. Check the L1 cache (Raw Data)
-        VxRawModel cached = RAW_CACHE.get(location);
-        if (cached != null) {
-            return Optional.of(cached);
+    public static Optional<VxStaticModel> getStaticModel(VxResourceLocation location) {
+        if (STATIC_CACHE.containsKey(location)) {
+            return Optional.of(STATIC_CACHE.get(location));
         }
 
-        // 2. Cache miss: Parse from disk via classpath
+        File file = resolveFile(location);
+        if (!file.exists()) {
+            VelGFX.LOGGER.error("Model file not found: {}", file.getAbsolutePath());
+            return Optional.empty();
+        }
+
         try {
-            VxRawModel raw = VxObjParser.parse(location);
-            RAW_CACHE.put(location, raw);
-            return Optional.of(raw);
-        } catch (IOException e) {
-            VelGFX.LOGGER.error("Failed to parse raw model from disk: {}", location, e);
+            VxStaticModel model = VxAssimpLoader.loadStatic(file);
+            STATIC_CACHE.put(location, model);
+            return Optional.of(model);
+        } catch (Exception e) {
+            VelGFX.LOGGER.error("Failed to load static model: {}", location, e);
             return Optional.empty();
         }
     }
 
     /**
-     * Retrieves the GPU-ready mesh definition for a given custom resource.
+     * Loads or retrieves a {@link VxSkinnedModel}.
      * <p>
-     * This method automatically handles the dependency chain:
-     * <ul>
-     *     <li>If the definition is cached, it returns it immediately.</li>
-     *     <li>If not, it requests the {@link VxRawModel} (triggering a load if necessary).</li>
-     *     <li>Once the raw model is obtained, it "bakes" it via {@link VxModelBaker} to produce the definition.</li>
-     * </ul>
+     * Skinned models support vertex deformation via bones and weights.
+     * Ideal for characters, creatures, or organic machinery.
      *
-     * @param location The custom resource location of the OBJ file.
-     * @return An {@link Optional} containing the baked mesh definition, or empty if the process failed.
+     * @param location The resource location of the model file.
+     * @param shader   The skinning shader required for the compute pass.
+     * @return An optional containing the model if loaded successfully.
      */
-    public static Optional<VxMeshDefinition> getDefinition(VxResourceLocation location) {
-        // 1. Check the L2 cache (Baked Definitions)
-        VxMeshDefinition cached = DEFINITION_CACHE.get(location);
-        if (cached != null) {
-            return Optional.of(cached);
+    public static Optional<VxSkinnedModel> getSkinnedModel(VxResourceLocation location, VxSkinningShader shader) {
+        if (SKINNED_CACHE.containsKey(location)) {
+            return Optional.of(SKINNED_CACHE.get(location));
         }
 
-        // 2. Cache miss: Obtain raw data to bake
-        Optional<VxRawModel> rawOpt = getRawModel(location);
-        if (rawOpt.isPresent()) {
-            // 3. Bake the raw data into a GPU-compatible format (calculating tangents, etc.)
-            VxMeshDefinition baked = VxModelBaker.bake(rawOpt.get());
-            DEFINITION_CACHE.put(location, baked);
-            return Optional.of(baked);
+        File file = resolveFile(location);
+        if (!file.exists()) {
+            VelGFX.LOGGER.error("Model file not found: {}", file.getAbsolutePath());
+            return Optional.empty();
         }
 
-        // 4. Failed to obtain raw data
-        return Optional.empty();
+        try {
+            VxSkinnedModel model = VxAssimpLoader.loadSkinned(file, shader);
+            SKINNED_CACHE.put(location, model);
+            return Optional.of(model);
+        } catch (Exception e) {
+            VelGFX.LOGGER.error("Failed to load skinned model: {}", location, e);
+            return Optional.empty();
+        }
     }
 
     /**
-     * Retrieves or creates a standalone mesh (dedicated VBO) for the given resource.
+     * Resolves a {@link VxResourceLocation} to a physical file on disk.
      * <p>
-     * Use this for complex models that are rendered individually or have specific isolation requirements.
-     *
-     * @param location The custom resource location of the model.
-     * @return An {@link Optional} containing the dedicated mesh handle.
+     * Assumes a standard directory structure: {@code gameDir/assets/<domain>/models/<path>}.
      */
-    public static Optional<VxDedicatedMesh> getStandaloneMesh(VxResourceLocation location) {
-        // 1. Check the L3 cache (GPU Objects)
-        VxDedicatedMesh cached = STANDALONE_MESH_CACHE.get(location);
-        if (cached != null) {
-            return Optional.of(cached);
-        }
-
-        // 2. Cache miss: Obtain the baked definition
-        Optional<VxMeshDefinition> definitionOpt = getDefinition(location);
-        if (definitionOpt.isPresent()) {
-            // 3. Upload to a dedicated VBO and cache the result
-            VxDedicatedMesh gpuMesh = new VxDedicatedMesh(definitionOpt.get());
-            STANDALONE_MESH_CACHE.put(location, gpuMesh);
-            return Optional.of(gpuMesh);
-        }
-
-        // 4. Failed to load definition
-        VelGFX.LOGGER.error("Failed to create standalone mesh for {}: definition not found.", location);
-        return Optional.empty();
+    private static File resolveFile(VxResourceLocation loc) {
+        // Example implementation - adapt to your actual asset path logic
+        return new File(loc.getPath());
     }
 
     /**
-     * Retrieves or creates a sub-mesh allocated within the shared {@link VxArenaBuffer}.
-     * <p>
-     * Use this for smaller, numerous models to reduce draw call overhead and state changes.
-     * The manager handles allocation within the arena automatically.
-     *
-     * @param location The custom resource location of the model.
-     * @return An {@link Optional} containing the arena mesh handle.
-     */
-    public static Optional<VxArenaMesh> getArenaMesh(VxResourceLocation location) {
-        // 1. Check the L3 cache (GPU Objects)
-        VxArenaMesh cached = ARENA_SUB_MESH_CACHE.get(location);
-        if (cached != null) {
-            return Optional.of(cached);
-        }
-
-        // 2. Cache miss: Obtain the baked definition
-        Optional<VxMeshDefinition> definitionOpt = getDefinition(location);
-        if (definitionOpt.isPresent()) {
-            // 3. Allocate space in the shared Arena Buffer
-            VxArenaMesh subMesh = VxArenaBuffer.getInstance().allocate(definitionOpt.get());
-
-            if (subMesh != null) {
-                ARENA_SUB_MESH_CACHE.put(location, subMesh);
-                return Optional.of(subMesh);
-            } else {
-                VelGFX.LOGGER.error("Failed to allocate arena buffer space for model: {}", location);
-            }
-        }
-
-        // 4. Failed to load definition or allocate memory
-        return Optional.empty();
-    }
-
-    /**
-     * Clears all caches and releases all associated GPU resources.
-     * <p>
-     * This method is destructive and should typically be called during a full resource reload (F3+T)
-     * or when the application is shutting down. It ensures that:
-     * <ul>
-     *     <li>All {@link VxMaterial} generated textures are deleted.</li>
-     *     <li>All dedicated VBOs/VAOs are deleted.</li>
-     *     <li>The shared Arena Buffer is destroyed.</li>
-     *     <li>All custom textures loaded via {@link VxTextureLoader} are deleted.</li>
-     * </ul>
+     * Clears all caches and releases GPU resources.
+     * Should be called on resource reload or shutdown.
      */
     public static void clear() {
-        VelGFX.LOGGER.info("Clearing VelGFX model caches and GPU resources...");
+        VelGFX.LOGGER.info("Clearing VelGFX Model Caches...");
 
-        // 1. Destroy raw models to free material PBR textures (Fixes Memory Leak)
-        RAW_CACHE.values().forEach(VxRawModel::destroy);
-        RAW_CACHE.clear();
+        STATIC_CACHE.values().forEach(VxStaticModel::delete);
+        STATIC_CACHE.clear();
 
-        // 2. Clear definitions
-        DEFINITION_CACHE.clear();
+        SKINNED_CACHE.values().forEach(VxSkinnedModel::delete);
+        SKINNED_CACHE.clear();
 
-        // 3. Delete all standalone GPU meshes
-        STANDALONE_MESH_CACHE.values().forEach(IVxRenderableMesh::delete);
-        STANDALONE_MESH_CACHE.clear();
-
-        // 4. Delete all arena sub-mesh handles
-        ARENA_SUB_MESH_CACHE.values().forEach(VxArenaMesh::delete);
-        ARENA_SUB_MESH_CACHE.clear();
-
-        // 5. Destroy the global arena buffer
-        VxArenaBuffer.getInstance().delete();
-
-        // 6. Clear all custom textures loaded via VxTextureLoader
+        // Texture loader should also be cleared as models hold references to textures
         VxTextureLoader.clear();
-
-        VelGFX.LOGGER.info("VelGFX model manager cleared successfully.");
     }
 }

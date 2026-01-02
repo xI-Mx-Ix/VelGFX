@@ -6,20 +6,18 @@ package net.xmx.velgfx.renderer.gl.mesh.arena;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.VxVertexBuffer;
-import net.xmx.velgfx.renderer.gl.VxVertexLayout;
-import net.xmx.velgfx.renderer.gl.mesh.VxMeshDefinition;
+import net.xmx.velgfx.renderer.gl.layout.IVxVertexLayout;
 import net.xmx.velgfx.renderer.gl.mesh.impl.VxArenaMesh;
+import org.lwjgl.opengl.GL30;
 
 import java.nio.ByteBuffer;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Objects;
+import java.util.*;
 
 /**
  * Manages a single, large, dynamically-growing Vertex Buffer Object (VBO) and a corresponding
- * Vertex Array Object (VAO) as a singleton to store many smaller meshes efficiently.
+ * Vertex Array Object (VAO) specifically configured for a given {@link IVxVertexLayout}.
  * <p>
  * <b>Performance Improvements:</b>
  * <ul>
@@ -34,8 +32,7 @@ import java.util.Objects;
  */
 public class VxArenaBuffer {
 
-    private static final int INITIAL_CAPACITY_VERTICES = 262144;
-    private static VxArenaBuffer instance;
+    private final IVxVertexLayout layout;
 
     /**
      * The underlying vertex buffer wrapper that handles the actual GL calls.
@@ -61,26 +58,32 @@ public class VxArenaBuffer {
     private final ArrayDeque<VxMemorySegment> segmentPool = new ArrayDeque<>();
 
     /**
-     * Private constructor to enforce the singleton pattern.
-     * Initializes the GPU resources via {@link VxVertexBuffer} with the initial capacity.
+     * Creates a new Arena Buffer for a specific layout.
      *
+     * @param layout             The vertex layout definition this arena supports.
      * @param capacityInVertices The initial maximum number of vertices this buffer can hold.
      */
-    private VxArenaBuffer(int capacityInVertices) {
-        long capacityBytes = (long) capacityInVertices * VxVertexLayout.STRIDE;
+    public VxArenaBuffer(IVxVertexLayout layout, int capacityInVertices) {
+        this.layout = layout;
+        long capacityBytes = (long) capacityInVertices * layout.getStride();
         this.buffer = new VxVertexBuffer(capacityBytes, true);
+
+        // Configure the VAO for this specific layout immediately
+        configureVao();
     }
 
     /**
-     * Gets the singleton instance of the arena buffer, creating it if necessary.
-     *
-     * @return The global VxArenaBuffer instance.
+     * Configures the Vertex Array Object (VAO) associated with this buffer.
+     * <p>
+     * This binds the VBO and calls the layout's attribute setup method to define
+     * how data is read by the GPU.
      */
-    public static synchronized VxArenaBuffer getInstance() {
-        if (instance == null || instance.buffer == null) {
-            instance = new VxArenaBuffer(INITIAL_CAPACITY_VERTICES);
-        }
-        return instance;
+    private void configureVao() {
+        GL30.glBindVertexArray(buffer.getVaoId());
+        buffer.bind(); // Bind VBO to ARRAY_BUFFER
+        layout.setupAttributes(); // Setup pointers (e.g., glVertexAttribPointer)
+        buffer.unbind();
+        GL30.glBindVertexArray(0);
     }
 
     /**
@@ -94,7 +97,7 @@ public class VxArenaBuffer {
         long currentCapacity = this.buffer.getCapacityBytes();
         long newCapacity = Math.max((long) (currentCapacity * 1.5), currentCapacity + requiredBytes);
 
-        VelGFX.LOGGER.warn("Resizing VxArenaBuffer from {} to {} bytes. This may cause a brief stutter.", currentCapacity, newCapacity);
+        VelGFX.LOGGER.warn("Resizing VxArenaBuffer (Layout: {}) from {} to {} bytes. This may cause a brief stutter.", layout.getClass().getSimpleName(), currentCapacity, newCapacity);
 
         // 1. Create a new, larger buffer.
         VxVertexBuffer newBuffer = new VxVertexBuffer(newCapacity, true);
@@ -107,6 +110,9 @@ public class VxArenaBuffer {
 
         // 4. Swap the reference to point to the new buffer.
         this.buffer = newBuffer;
+
+        // 5. The new buffer has a new VAO/VBO ID, so we must re-configure attributes
+        configureVao();
     }
 
     /**
@@ -116,15 +122,18 @@ public class VxArenaBuffer {
      * If a suitable gap is found, it is used (and split if too large).
      * If no gap is found, the buffer "high-water mark" is bumped.
      *
-     * @param definition The mesh definition to add to the arena.
+     * @param vertexData        The raw ByteBuffer containing the vertex data (must be direct).
+     * @param allDrawCommands   The list of draw commands for rendering the entire mesh.
+     * @param groupDrawCommands The map of group-specific draw commands for animation support.
      * @return A {@link VxArenaMesh} handle representing the mesh's data in the shared buffer.
      */
-    public VxArenaMesh allocate(VxMeshDefinition definition) {
-        Objects.requireNonNull(definition, "Mesh definition cannot be null");
+    public VxArenaMesh allocate(ByteBuffer vertexData,
+                                List<VxDrawCommand> allDrawCommands,
+                                Map<String, List<VxDrawCommand>> groupDrawCommands) {
+        Objects.requireNonNull(vertexData, "Vertex data cannot be null");
         RenderSystem.assertOnRenderThread();
 
-        ByteBuffer modelBuffer = definition.getVertexData();
-        int modelSizeBytes = modelBuffer.remaining();
+        int modelSizeBytes = vertexData.remaining();
         long allocationOffset = -1;
 
         // 1. Try to find a free block that fits (First-Fit).
@@ -163,9 +172,9 @@ public class VxArenaBuffer {
         }
 
         // Upload the new mesh data into the determined slot.
-        this.buffer.uploadSubData(allocationOffset, modelBuffer);
+        this.buffer.uploadSubData(allocationOffset, vertexData);
 
-        return new VxArenaMesh(this, allocationOffset, modelSizeBytes, definition.allDrawCommands, definition.getGroupDrawCommands());
+        return new VxArenaMesh(this, allocationOffset, modelSizeBytes, allDrawCommands, groupDrawCommands);
     }
 
     /**
@@ -188,7 +197,7 @@ public class VxArenaBuffer {
         // Optimization: if we are freeing the very last allocated block, simply rewind the counter.
         if (offset + size == this.usedBytes) {
             this.usedBytes = offset;
-            
+
             // Check if the previous block is also free, to rewind even further.
             if (!freeSegments.isEmpty()) {
                 VxMemorySegment last = freeSegments.get(freeSegments.size() - 1);
@@ -207,7 +216,7 @@ public class VxArenaBuffer {
         // 2. Find insertion point to keep list sorted.
         // Collections.binarySearch returns (-(insertion point) - 1) if not found.
         int index = Collections.binarySearch(freeSegments, newSegment);
-        
+
         if (index < 0) {
             index = -(index + 1);
         } else {
@@ -243,11 +252,12 @@ public class VxArenaBuffer {
     }
 
     /**
-     * Binds the shared VAO to prepare for rendering.
+     * Binds the shared VAO associated with this arena.
+     * Used by meshes before rendering to establish state.
      */
-    public void preRender() {
+    public void bindVao() {
         if (this.buffer != null) {
-            this.buffer.bind();
+            GL30.glBindVertexArray(this.buffer.getVaoId());
         }
     }
 
@@ -260,13 +270,17 @@ public class VxArenaBuffer {
             this.buffer.delete();
             this.buffer = null;
         }
-        
+
         // Recycle all segments back to pool (optional, but good for restart cleanliness)
         for (VxMemorySegment seg : freeSegments) {
             recycleSegment(seg);
         }
         freeSegments.clear();
         this.usedBytes = 0;
+    }
+
+    public IVxVertexLayout getLayout() {
+        return layout;
     }
 
     // --- Object Pooling for GC Efficiency ---

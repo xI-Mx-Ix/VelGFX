@@ -1,0 +1,92 @@
+/*
+ * This file is part of VelGFX.
+ * Licensed under LGPL 3.0.
+ */
+package net.xmx.velgfx.renderer.model;
+
+import com.mojang.blaze3d.vertex.PoseStack;
+import net.xmx.velgfx.renderer.gl.mesh.IVxRenderableMesh;
+import net.xmx.velgfx.renderer.model.animation.VxAnimation;
+import net.xmx.velgfx.renderer.model.animation.VxAnimator;
+import net.xmx.velgfx.renderer.model.skeleton.VxNode;
+
+import java.util.Collections;
+import java.util.Map;
+
+/**
+ * Represents the abstract base for 3D models in the engine.
+ * <p>
+ * A model acts as a container for:
+ * <ul>
+ *     <li><b>Geometry:</b> Handled by {@link IVxRenderableMesh} (VBO/VAO).</li>
+ *     <li><b>Hierarchy:</b> A root {@link VxNode} representing the scene graph.</li>
+ *     <li><b>Animations:</b> A library of available clips.</li>
+ * </ul>
+ *
+ * @author xI-Mx-Ix
+ */
+public abstract class VxModel {
+
+    protected final VxNode rootNode;
+    protected final IVxRenderableMesh mesh;
+    protected final Map<String, VxAnimation> animations;
+    protected final VxAnimator animator;
+
+    /**
+     * Constructs a base model.
+     *
+     * @param rootNode   The root of the scene hierarchy.
+     * @param mesh       The renderable mesh resource.
+     * @param animations The map of animation clips.
+     */
+    protected VxModel(VxNode rootNode, IVxRenderableMesh mesh, Map<String, VxAnimation> animations) {
+        this.rootNode = rootNode;
+        this.mesh = mesh;
+        this.animations = animations != null ? animations : Collections.emptyMap();
+        this.animator = new VxAnimator(rootNode);
+    }
+
+    /**
+     * Updates the animation state.
+     *
+     * @param dt Delta time in seconds.
+     */
+    public void update(float dt) {
+        animator.update(dt);
+    }
+
+    /**
+     * Renders the model into the pipeline.
+     *
+     * @param poseStack   The current transformation stack.
+     * @param packedLight The packed light value.
+     */
+    public abstract void render(PoseStack poseStack, int packedLight);
+
+    /**
+     * Starts playing the specified animation.
+     *
+     * @param name The name of the animation clip.
+     */
+    public void playAnimation(String name) {
+        VxAnimation anim = animations.get(name);
+        if (anim != null) {
+            animator.playAnimation(anim);
+        }
+    }
+
+    /**
+     * Releases GPU resources associated with this model.
+     */
+    public void delete() {
+        mesh.delete();
+    }
+
+    public VxNode getRootNode() {
+        return rootNode;
+    }
+
+    public IVxRenderableMesh getMesh() {
+        return mesh;
+    }
+}

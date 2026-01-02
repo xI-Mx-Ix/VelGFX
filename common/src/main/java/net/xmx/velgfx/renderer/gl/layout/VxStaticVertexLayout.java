@@ -2,20 +2,20 @@
  * This file is part of VelGFX.
  * Licensed under LGPL 3.0.
  */
-package net.xmx.velgfx.renderer.gl;
+package net.xmx.velgfx.renderer.gl.layout;
 
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
 
 /**
- * A utility class that defines the standard vertex layout for all meshes in the system.
+ * Represents the standard, static vertex layout used by the engine for general meshes.
  * <p>
- * This layout includes positions, colors, texture coordinates, lightmap coordinates,
- * normals, tangents, and the <b>mid-texture coordinates</b> required by shaderpacks.
+ * This layout is strictly optimized for the rendering pipeline of {@code VxRenderQueue}.
+ * It packs data into 44 bytes per vertex.
  *
  * @author xI-Mx-Ix
  */
-public final class VxVertexLayout {
+public class VxStaticVertexLayout implements IVxVertexLayout {
 
     /**
      * The size of a single vertex in bytes.
@@ -35,6 +35,7 @@ public final class VxVertexLayout {
      */
     public static final int STRIDE = 44;
 
+    // Attribute Locations
     /**
      * The attribute location for vertex positions (vec3).
      * <p>
@@ -86,10 +87,26 @@ public final class VxVertexLayout {
      */
     public static final int AT_TANGENT = 8;
 
+    private static final VxStaticVertexLayout INSTANCE = new VxStaticVertexLayout();
+
     /**
-     * Private constructor to prevent instantiation of this utility class.
+     * Private constructor for singleton access.
      */
-    private VxVertexLayout() {}
+    private VxStaticVertexLayout() {}
+
+    /**
+     * Gets the global instance of the static layout.
+     *
+     * @return The singleton instance.
+     */
+    public static VxStaticVertexLayout getInstance() {
+        return INSTANCE;
+    }
+
+    @Override
+    public int getStride() {
+        return STRIDE;
+    }
 
     /**
      * Configures the vertex attribute pointers for the currently bound Vertex Array Object (VAO).
@@ -97,7 +114,8 @@ public final class VxVertexLayout {
      * This defines how the GPU interprets the byte stream from the VBO. It enables
      * the necessary vertex arrays and sets up pointers with the correct offsets and types.
      */
-    public static void setupVertexAttributes() {
+    @Override
+    public void setupAttributes() {
         // 1. Position: 3 floats (x, y, z)
         GL30.glEnableVertexAttribArray(AT_POSITION);
         GL30.glVertexAttribPointer(AT_POSITION, 3, GL11.GL_FLOAT, false, STRIDE, 0);

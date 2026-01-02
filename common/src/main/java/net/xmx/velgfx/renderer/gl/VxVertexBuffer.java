@@ -5,6 +5,7 @@
 package net.xmx.velgfx.renderer.gl;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import net.xmx.velgfx.renderer.gl.layout.VxStaticVertexLayout;
 import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL31;
@@ -15,7 +16,7 @@ import java.nio.ByteBuffer;
  * Wraps an OpenGL Vertex Buffer Object (VBO) and its associated Vertex Array Object (VAO).
  * <p>
  * This class abstracts the low-level GL calls required to allocate memory on the GPU,
- * configure vertex attributes via {@link VxVertexLayout}, and upload data.
+ * configure vertex attributes via {@link VxStaticVertexLayout}, and upload data.
  *
  * @author xI-Mx-Ix
  */
@@ -50,7 +51,7 @@ public class VxVertexBuffer {
         // Allocate memory
         GL15.glBufferData(GL15.GL_ARRAY_BUFFER, capacityBytes, dynamic ? GL15.GL_DYNAMIC_DRAW : GL15.GL_STATIC_DRAW);
         // Setup attributes
-        VxVertexLayout.setupVertexAttributes();
+        VxStaticVertexLayout.getInstance().setupAttributes();
         unbind();
     }
 
@@ -111,5 +112,23 @@ public class VxVertexBuffer {
 
     public long getCapacityBytes() {
         return capacityBytes;
+    }
+
+    /**
+     * Retrieves the raw OpenGL VBO ID.
+     *
+     * @return The VBO ID.
+     */
+    public int getVboId() {
+        return vboId;
+    }
+
+    /**
+     * Retrieves the raw OpenGL VAO ID.
+     *
+     * @return The VAO ID.
+     */
+    public int getVaoId() {
+        return vaoId;
     }
 }

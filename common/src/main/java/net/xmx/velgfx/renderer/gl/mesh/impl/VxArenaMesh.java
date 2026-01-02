@@ -5,7 +5,7 @@
 package net.xmx.velgfx.renderer.gl.mesh.impl;
 
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
-import net.xmx.velgfx.renderer.gl.VxVertexLayout;
+import net.xmx.velgfx.renderer.gl.layout.VxStaticVertexLayout;
 import net.xmx.velgfx.renderer.gl.mesh.VxAbstractRenderableMesh;
 import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaBuffer;
 
@@ -61,7 +61,7 @@ public class VxArenaMesh extends VxAbstractRenderableMesh {
         this.parentBuffer = Objects.requireNonNull(parentBuffer, "Parent buffer cannot be null");
         this.offsetBytes = offsetBytes;
         this.sizeBytes = sizeBytes;
-        this.baseVertex = (int) (offsetBytes / VxVertexLayout.STRIDE);
+        this.baseVertex = (int) (offsetBytes / VxStaticVertexLayout.STRIDE);
 
         // Initialize textures immediately upon creation to ensure they are ready for rendering.
         initializeTextures();

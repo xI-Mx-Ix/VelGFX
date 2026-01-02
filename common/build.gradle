@@ -9,6 +9,10 @@ dependencies {
     modImplementation "net.fabricmc:fabric-loader:$rootProject.fabric_loader_version"
     modImplementation "dev.architectury:architectury:$rootProject.architectury_api_version"
     include(implementation(annotationProcessor("io.github.llamalad7:mixinextras-fabric:$mixinextras_version")))
+
+    implementation("org.lwjgl:lwjgl-assimp:$lwjgl_version") {
+        exclude group: "org.lwjgl", module: "lwjgl"
+    }
 }
 
 loom {

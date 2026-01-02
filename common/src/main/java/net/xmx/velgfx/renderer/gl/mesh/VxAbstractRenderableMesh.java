@@ -90,6 +90,20 @@ public abstract class VxAbstractRenderableMesh implements IVxRenderableMesh {
     }
 
     /**
+     * Performs per-frame updates for this mesh.
+     * <p>
+     * This is primarily used by animated meshes (like {@link net.xmx.velgfx.renderer.gl.mesh.impl.VxSkinnedMesh})
+     * to update bone matrices or physics state before rendering.
+     * <p>
+     * <b>Default Implementation:</b> Does nothing (no-op).
+     *
+     * @param dt The time elapsed since the last frame in seconds.
+     */
+    public void update(float dt) {
+        // No-op by default for static meshes.
+    }
+
+    /**
      * Checks if the mesh has been marked as deleted.
      *
      * @return True if deleted, false otherwise.
