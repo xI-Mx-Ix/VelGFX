@@ -4,15 +4,16 @@
  */
 package net.xmx.velgfx.resources;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.Objects;
 
 /**
- * A custom resource location implementation that bypasses Minecraft's strict
- * naming conventions (lowercase only, specific characters).
+ * A custom resource location implementation for the VelGFX pipeline.
  * <p>
- * This class allows paths with uppercase letters, spaces, and other symbols
- * supported by the underlying file system or ZIP standard. It is used exclusively
- * within the VelGFX pipeline for loading models and textures.
+ * This class handles the resolution of file paths for models and textures.
+ * It supports standard Minecraft-like namespaced locations (e.g., "modid" : "path")
+ * as well as relative path resolution for internal asset loading.
  *
  * @author xI-Mx-Ix
  */
@@ -21,26 +22,47 @@ public class VxResourceLocation {
     private final String path;
 
     /**
-     * Constructs a new VxResourceLocation.
+     * Constructs a new VxResourceLocation from a full path.
      *
-     * @param path The full path to the resource (e.g., "assets/velthoric/models/Car Model.obj").
+     * @param fullPath The full path to the resource (e.g., "assets/velgfx/models/ball.obj").
      */
-    public VxResourceLocation(String path) {
-        // Normalize separators to forward slashes to ensure consistency across OS
-        this.path = path.replace('\\', '/');
+    public VxResourceLocation(String fullPath) {
+        this.path = fullPath.replace('\\', '/');
     }
 
     /**
-     * Constructs a new VxResourceLocation relative to a parent directory.
+     * Constructs a new VxResourceLocation using a namespace and a path, OR a parent directory and a relative path.
      * <p>
-     * This method handles relative path segments (e.g., "../") to resolve
-     * the canonical path.
+     * <b>Mode 1: Namespace (Standard)</b><br>
+     * If {@code namespaceOrBase} is a simple identifier (contains no slashes),
+     * the result is formatted as: {@code assets/<namespace>/<path>}.
+     * <br><i>Example:</i> {@code new VxResourceLocation("velgfx", "models/ball.obj")} -> {@code "assets/velgfx/models/ball.obj"}
+     * <p>
+     * <b>Mode 2: Relative Directory</b><br>
+     * If {@code namespaceOrBase} is a path (contains slashes), it is treated as a base directory.
+     * <br><i>Example:</i> {@code new VxResourceLocation("assets/velgfx/models/", "../textures/skin.png")} -> {@code "assets/velgfx/textures/skin.png"}
      *
-     * @param directory The base directory (must end with '/').
-     * @param rawPath   The relative path (e.g., "../textures/Image.png").
+     * @param namespaceOrBase The namespace (e.g., "velthoric") or base directory.
+     * @param path            The path to the resource or a relative path string.
      */
-    public VxResourceLocation(String directory, String rawPath) {
-        this(resolvePath(directory, rawPath));
+    public VxResourceLocation(String namespaceOrBase, String path) {
+        String normalizedBase = namespaceOrBase.replace('\\', '/');
+        String normalizedPath = path.replace('\\', '/');
+
+        // Check if the first argument looks like a path (contains separators)
+        boolean isDirectoryBase = normalizedBase.contains("/");
+
+        if (isDirectoryBase) {
+            // Logic for relative path resolution (used by model loaders to find textures)
+            this.path = resolvePath(normalizedBase, normalizedPath);
+        } else {
+            // Logic for standard Namespace + Path definition
+            // Prevents double slashes if the user accidentally provided one at the start of 'path'
+            if (normalizedPath.startsWith("/")) {
+                normalizedPath = normalizedPath.substring(1);
+            }
+            this.path = "assets/" + normalizedBase + "/" + normalizedPath;
+        }
     }
 
     /**
@@ -51,10 +73,20 @@ public class VxResourceLocation {
      * @return The resolved, clean path.
      */
     private static String resolvePath(String baseDir, String target) {
-        String fullPath = baseDir + target.replace('\\', '/');
+        // If the target is already absolute (starts with assets/), ignore the base
+        if (target.startsWith("assets/")) {
+            return target;
+        }
+
+        String fullPath;
+        if (!baseDir.isEmpty() && !baseDir.endsWith("/") && !target.startsWith("/")) {
+            fullPath = baseDir + "/" + target;
+        } else {
+            fullPath = baseDir + target;
+        }
+
         String[] parts = fullPath.split("/");
-        
-        java.util.Deque<String> stack = new java.util.ArrayDeque<>();
+        Deque<String> stack = new ArrayDeque<>();
 
         for (String part : parts) {
             if (part.equals(".") || part.isEmpty()) {
