@@ -51,6 +51,10 @@ dependencies {
 
     common(project(path: ':common', configuration: 'namedElements')) { transitive false }
     shadowBundle project(path: ':common', configuration: 'transformProductionFabric')
+
+    shadowBundle("org.lwjgl:lwjgl-assimp:$lwjgl_version") {
+        exclude group: "org.lwjgl", module: "lwjgl"
+    }
 }
 
 processResources {
