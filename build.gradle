@@ -36,15 +36,8 @@ subprojects {
     apply plugin: 'architectury-plugin'
     apply plugin: 'maven-publish'
 
-    def archiveMap = [
-            "fabric"    : "velgfx-fabric",
-            "forge"     : "velgfx-forge",
-            "neoforge"  : "velgfx-neoforge",
-            "common"    : "velgfx-common"
-    ]
-
     base {
-        "$rootProject.archives_name-$project.name"
+        archivesName = "$rootProject.archives_name-$project.name"
     }
 
     repositories {
