@@ -10,7 +10,6 @@ import net.xmx.velgfx.renderer.model.loader.VxAssimpLoader;
 import net.xmx.velgfx.resources.VxResourceLocation;
 import net.xmx.velgfx.resources.VxTextureLoader;
 
-import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -56,14 +55,9 @@ public final class VxModelManager {
             return Optional.of(STATIC_CACHE.get(location));
         }
 
-        File file = resolveFile(location);
-        if (!file.exists()) {
-            VelGFX.LOGGER.error("Model file not found: {}", file.getAbsolutePath());
-            return Optional.empty();
-        }
-
         try {
-            VxStaticModel model = VxAssimpLoader.loadStatic(file);
+            // Pass the location directly to the loader to support JAR loading
+            VxStaticModel model = VxAssimpLoader.loadStatic(location);
             STATIC_CACHE.put(location, model);
             return Optional.of(model);
         } catch (Exception e) {
@@ -87,30 +81,15 @@ public final class VxModelManager {
             return Optional.of(SKINNED_CACHE.get(location));
         }
 
-        File file = resolveFile(location);
-        if (!file.exists()) {
-            VelGFX.LOGGER.error("Model file not found: {}", file.getAbsolutePath());
-            return Optional.empty();
-        }
-
         try {
-            VxSkinnedModel model = VxAssimpLoader.loadSkinned(file, shader);
+            // Pass the location directly to the loader to support JAR loading
+            VxSkinnedModel model = VxAssimpLoader.loadSkinned(location, shader);
             SKINNED_CACHE.put(location, model);
             return Optional.of(model);
         } catch (Exception e) {
             VelGFX.LOGGER.error("Failed to load skinned model: {}", location, e);
             return Optional.empty();
         }
-    }
-
-    /**
-     * Resolves a {@link VxResourceLocation} to a physical file on disk.
-     * <p>
-     * Assumes a standard directory structure: {@code gameDir/assets/<domain>/models/<path>}.
-     */
-    private static File resolveFile(VxResourceLocation loc) {
-        // Example implementation - adapt to your actual asset path logic
-        return new File(loc.getPath());
     }
 
     /**

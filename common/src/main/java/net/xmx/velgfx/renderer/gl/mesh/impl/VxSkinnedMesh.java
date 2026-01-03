@@ -178,9 +178,8 @@ public class VxSkinnedMesh extends VxAbstractRenderableMesh {
         GL30.glEnableVertexAttribArray(2);
         GL30.glVertexAttribPointer(2, 2, GL11.GL_FLOAT, false, RESULT_STRIDE, 24);
 
-        // 4: Lightmap UV (Not simulated, disable and set default)
+        // 4: Lightmap UV
         GL30.glDisableVertexAttribArray(4);
-        GL30.glVertexAttribI2i(4, 240, 240);
 
         // 5: Normal (vec3) -> Offset 12 (after Pos)
         GL30.glEnableVertexAttribArray(5);

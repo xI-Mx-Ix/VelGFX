@@ -5,13 +5,11 @@
 package net.xmx.velgfx.renderer.model.loader;
 
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
-import net.xmx.velgfx.renderer.gl.VxVertexBuffer;
 import net.xmx.velgfx.renderer.gl.layout.VxSkinnedVertexLayout;
 import net.xmx.velgfx.renderer.gl.layout.VxStaticVertexLayout;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
 import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaManager;
 import net.xmx.velgfx.renderer.gl.mesh.impl.VxArenaMesh;
-import net.xmx.velgfx.renderer.gl.mesh.impl.VxDedicatedMesh;
 import net.xmx.velgfx.renderer.gl.mesh.impl.VxSkinnedMesh;
 import net.xmx.velgfx.renderer.gl.shader.VxSkinningShader;
 import net.xmx.velgfx.renderer.model.VxSkinnedModel;
@@ -27,7 +25,6 @@ import org.joml.Vector3f;
 import org.lwjgl.assimp.*;
 import org.lwjgl.system.MemoryUtil;
 
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -36,7 +33,7 @@ import java.nio.IntBuffer;
 import java.util.*;
 
 /**
- * A production-grade loader for 3D assets using the Assimp library.
+ * A loader for 3D assets using the Assimp library.
  * <p>
  * This class orchestrates the ingestion of external model files (OBJ, FBX, GLTF, etc.)
  * and converts them into the engine's internal memory formats. It handles the complexity
@@ -68,7 +65,6 @@ public class VxAssimpLoader {
      */
     private static final int POST_PROCESS_FLAGS = Assimp.aiProcess_Triangulate |
             Assimp.aiProcess_GenSmoothNormals |
-            Assimp.aiProcess_FlipUVs |
             Assimp.aiProcess_CalcTangentSpace |
             Assimp.aiProcess_LimitBoneWeights |
             Assimp.aiProcess_JoinIdenticalVertices |

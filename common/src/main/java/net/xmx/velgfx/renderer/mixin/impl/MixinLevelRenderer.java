@@ -10,7 +10,6 @@ import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LightTexture;
 import net.xmx.velgfx.renderer.gl.mesh.VxRenderQueue;
-import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaBuffer;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -32,9 +31,6 @@ public class MixinLevelRenderer {
      */
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void velgfx_onRenderLevel_Head(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix, Matrix4f projectionMatrix, CallbackInfo ci) {
-        // Prepare all arena-based models for rendering (bind shared VAO state if needed).
-        VxArenaBuffer.getInstance().preRender();
-
         // Reset the batch queue for the new frame so it's empty before we start adding meshes.
         VxRenderQueue.getInstance().reset();
     }

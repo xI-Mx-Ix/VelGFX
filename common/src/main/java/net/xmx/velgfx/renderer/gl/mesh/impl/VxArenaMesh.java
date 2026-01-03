@@ -74,7 +74,7 @@ public class VxArenaMesh extends VxAbstractRenderableMesh {
      */
     @Override
     public void setupVaoState() {
-        this.parentBuffer.preRender();
+        this.parentBuffer.bindVao();
     }
 
     /**
