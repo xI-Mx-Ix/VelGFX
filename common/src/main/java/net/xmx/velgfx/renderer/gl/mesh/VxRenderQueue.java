@@ -15,6 +15,7 @@ import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.VxGlState;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
+import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaMesh;
 import net.xmx.velgfx.renderer.util.VxShaderDetector;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
@@ -54,8 +55,7 @@ public class VxRenderQueue {
     private int capacity = INITIAL_CAPACITY;
 
     // --- Structure of Arrays (SoA) Storage ---
-    // These arrays store render data contiguously to optimize memory access.
-    private VxAbstractRenderableMesh[] meshes;
+    private IVxRenderableMesh[] meshes;
     private Matrix4f[] modelMatrices;
     private Matrix3f[] normalMatrices;
     private int[] packedLights;
@@ -120,7 +120,7 @@ public class VxRenderQueue {
      * Pre-allocates the arrays and the matrix objects within them.
      */
     private VxRenderQueue() {
-        this.meshes = new VxAbstractRenderableMesh[INITIAL_CAPACITY];
+        this.meshes = new IVxRenderableMesh[INITIAL_CAPACITY];
         this.modelMatrices = new Matrix4f[INITIAL_CAPACITY];
         this.normalMatrices = new Matrix3f[INITIAL_CAPACITY];
         this.packedLights = new int[INITIAL_CAPACITY];
@@ -159,22 +159,23 @@ public class VxRenderQueue {
      * @param poseStack The current transformation stack.
      * @param packedLight The packed light value.
      */
-    public void add(VxAbstractRenderableMesh mesh, PoseStack poseStack, int packedLight) {
-        if (mesh == null || mesh.isDeleted()) return;
+    public void add(IVxRenderableMesh mesh, PoseStack poseStack, int packedLight) {
+        // We strictly check for VxArenaMesh as it is the unified implementation
+        if (mesh instanceof VxArenaMesh arenaMesh && !arenaMesh.isDeleted()) {
+            ensureCapacity(count + 1);
 
-        ensureCapacity(count + 1);
+            // Store mesh reference
+            this.meshes[count] = arenaMesh;
 
-        // Store mesh reference
-        this.meshes[count] = mesh;
+            // Copy matrix data into the pre-allocated objects using .set() (Zero Allocation)
+            this.modelMatrices[count].set(poseStack.last().pose());
+            this.normalMatrices[count].set(poseStack.last().normal());
 
-        // Copy matrix data into the pre-allocated objects using .set() (Zero Allocation)
-        this.modelMatrices[count].set(poseStack.last().pose());
-        this.normalMatrices[count].set(poseStack.last().normal());
+            // Store primitive light value
+            this.packedLights[count] = packedLight;
 
-        // Store primitive light value
-        this.packedLights[count] = packedLight;
-
-        count++;
+            count++;
+        }
     }
 
     /**
@@ -265,7 +266,7 @@ public class VxRenderQueue {
 
         // 2. Iterate over queued items
         for (int i = 0; i < count; i++) {
-            VxAbstractRenderableMesh mesh = this.meshes[i];
+            IVxRenderableMesh  mesh = this.meshes[i];
             Matrix4f modelMat = this.modelMatrices[i];
             Matrix3f normalMat = this.normalMatrices[i];
             int packedLight = this.packedLights[i];
@@ -307,7 +308,8 @@ public class VxRenderQueue {
                 RenderSystem.glUniformMatrix3(normalMatrixLocation, false, MATRIX_BUFFER_9);
             }
 
-            // Bind Mesh VAO (Delegated to mesh implementation)
+            // Bind Mesh VAO
+            // This could be the Arena VAO (Static) or the Result VAO (Skinned Proxy)
             mesh.setupVaoState();
 
             // Upload Lightmap UV
@@ -326,6 +328,8 @@ public class VxRenderQueue {
                 shader.setSampler("Sampler0", command.material.albedoMapGlId);
 
                 shader.apply();
+
+                // Calculate the final offset based on the mesh type (Absolute for Arena, Relative for Result)
                 GL11.glDrawArrays(GL11.GL_TRIANGLES, mesh.getFinalVertexOffset(command), command.vertexCount);
             }
 
@@ -387,7 +391,7 @@ public class VxRenderQueue {
 
         // 3. Render Loop
         for (int i = 0; i < count; i++) {
-            VxAbstractRenderableMesh mesh = this.meshes[i];
+            IVxRenderableMesh  mesh = this.meshes[i];
             Matrix4f modelMat = this.modelMatrices[i];
             Matrix3f normalMat = this.normalMatrices[i];
             int packedLight = this.packedLights[i];
@@ -411,7 +415,7 @@ public class VxRenderQueue {
                 RenderSystem.glUniformMatrix3(this.cachedNormalMatLoc, false, MATRIX_BUFFER_9);
             }
 
-            // Prepare Mesh Data
+            // Prepare Mesh Data (Bind correct VAO)
             mesh.setupVaoState();
 
             // Upload Lightmap Coordinates (Overlay/Lightmap are usually generic attributes)
@@ -447,6 +451,7 @@ public class VxRenderQueue {
                 // Reset Active Texture to 0 to ensure subsequent operations affect the primary unit
                 RenderSystem.activeTexture(GL13.GL_TEXTURE0);
 
+                // Draw
                 GL11.glDrawArrays(GL11.GL_TRIANGLES, mesh.getFinalVertexOffset(command), command.vertexCount);
             }
 

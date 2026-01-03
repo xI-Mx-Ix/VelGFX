@@ -9,7 +9,6 @@ import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.VxVertexBuffer;
 import net.xmx.velgfx.renderer.gl.layout.IVxVertexLayout;
-import net.xmx.velgfx.renderer.gl.mesh.impl.VxArenaMesh;
 import org.lwjgl.opengl.GL30;
 
 import java.nio.ByteBuffer;

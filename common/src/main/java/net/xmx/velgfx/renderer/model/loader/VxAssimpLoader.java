@@ -9,9 +9,7 @@ import net.xmx.velgfx.renderer.gl.layout.VxSkinnedVertexLayout;
 import net.xmx.velgfx.renderer.gl.layout.VxStaticVertexLayout;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
 import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaManager;
-import net.xmx.velgfx.renderer.gl.mesh.impl.VxArenaMesh;
-import net.xmx.velgfx.renderer.gl.mesh.impl.VxSkinnedMesh;
-import net.xmx.velgfx.renderer.gl.shader.VxSkinningShader;
+import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaMesh;
 import net.xmx.velgfx.renderer.model.VxSkinnedModel;
 import net.xmx.velgfx.renderer.model.VxStaticModel;
 import net.xmx.velgfx.renderer.model.animation.VxAnimation;
@@ -113,7 +111,12 @@ public class VxAssimpLoader {
 
             Map<String, VxAnimation> animations = parseAnimations(scene);
 
-            return new VxStaticModel(rootNode, arenaMesh, animations, nodeCommands);
+            // Create a skeleton wrapper for the static hierarchy.
+            // Static models do not have bones or inverse bind matrices, so we pass an empty list
+            // and an identity matrix for the global inverse.
+            VxSkeleton skeleton = new VxSkeleton(rootNode, Collections.emptyList(), new Matrix4f());
+
+            return new VxStaticModel(skeleton, arenaMesh, animations, nodeCommands);
         } finally {
             Assimp.aiReleaseImport(scene);
             // Free the native memory buffer containing the raw file
@@ -125,7 +128,7 @@ public class VxAssimpLoader {
      * Imports a file as a {@link VxSkinnedModel} suitable for vertex skinning.
      * <p>
      * The geometry is allocated into the {@link VxSkinnedVertexLayout} arena (Source Data).
-     * The {@link VxSkinningShader} instance is retrieved automatically.
+     * The model itself manages the creation of the Result VBO and Transform Feedback.
      *
      * @param location The resource location of the model file.
      * @return A constructed skinned model.
@@ -160,9 +163,7 @@ public class VxAssimpLoader {
                     .getArena(VxSkinnedVertexLayout.getInstance())
                     .allocate(geometryBuffer, allCommands, null);
 
-            VxSkinnedMesh mesh = new VxSkinnedMesh(allCommands, sourceMesh, skeleton, VxSkinningShader.getInstance());
-
-            return new VxSkinnedModel(skeleton, mesh, animations);
+            return new VxSkinnedModel(skeleton, sourceMesh, animations);
         } finally {
             Assimp.aiReleaseImport(scene);
             MemoryUtil.memFree(fileData);
