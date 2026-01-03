@@ -71,19 +71,20 @@ public final class VxModelManager {
      * <p>
      * Skinned models support vertex deformation via bones and weights.
      * Ideal for characters, creatures, or organic machinery.
+     * <p>
+     * The required {@link VxSkinningShader} is managed internally.
      *
      * @param location The resource location of the model file.
-     * @param shader   The skinning shader required for the compute pass.
      * @return An optional containing the model if loaded successfully.
      */
-    public static Optional<VxSkinnedModel> getSkinnedModel(VxResourceLocation location, VxSkinningShader shader) {
+    public static Optional<VxSkinnedModel> getSkinnedModel(VxResourceLocation location) {
         if (SKINNED_CACHE.containsKey(location)) {
             return Optional.of(SKINNED_CACHE.get(location));
         }
 
         try {
-            // Pass the location directly to the loader to support JAR loading
-            VxSkinnedModel model = VxAssimpLoader.loadSkinned(location, shader);
+            // Pass the location directly to the loader
+            VxSkinnedModel model = VxAssimpLoader.loadSkinned(location);
             SKINNED_CACHE.put(location, model);
             return Optional.of(model);
         } catch (Exception e) {
@@ -107,5 +108,8 @@ public final class VxModelManager {
 
         // Texture loader should also be cleared as models hold references to textures
         VxTextureLoader.clear();
+
+        // Release the skinning shader program
+        VxSkinningShader.destroy();
     }
 }

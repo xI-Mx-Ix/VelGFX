@@ -56,7 +56,6 @@ public class VxAssimpLoader {
      * <ul>
      *     <li>{@code aiProcess_Triangulate}: Ensures all faces are triangles.</li>
      *     <li>{@code aiProcess_GenSmoothNormals}: Generates normals if missing.</li>
-     *     <li>{@code aiProcess_FlipUVs}: Converts UV origin from Top-Left to Bottom-Left (OpenGL standard).</li>
      *     <li>{@code aiProcess_CalcTangentSpace}: Generates Tangents for Normal Mapping.</li>
      *     <li>{@code aiProcess_LimitBoneWeights}: Limits weights to 4 per vertex (GPU requirement).</li>
      *     <li>{@code aiProcess_JoinIdenticalVertices}: Optimizes the mesh by removing duplicate vertices.</li>
@@ -126,12 +125,12 @@ public class VxAssimpLoader {
      * Imports a file as a {@link VxSkinnedModel} suitable for vertex skinning.
      * <p>
      * The geometry is allocated into the {@link VxSkinnedVertexLayout} arena (Source Data).
+     * The {@link VxSkinningShader} instance is retrieved automatically.
      *
      * @param location The resource location of the model file.
-     * @param shader   The skinning shader program that will render this mesh.
      * @return A constructed skinned model.
      */
-    public static VxSkinnedModel loadSkinned(VxResourceLocation location, VxSkinningShader shader) {
+    public static VxSkinnedModel loadSkinned(VxResourceLocation location) {
         ByteBuffer fileData = loadResourceToBuffer(location);
         String extensionHint = getExtension(location.getPath());
 
@@ -161,8 +160,7 @@ public class VxAssimpLoader {
                     .getArena(VxSkinnedVertexLayout.getInstance())
                     .allocate(geometryBuffer, allCommands, null);
 
-            // Create the Skinned Mesh which manages the Transform Feedback pipeline
-            VxSkinnedMesh mesh = new VxSkinnedMesh(allCommands, sourceMesh, skeleton, shader);
+            VxSkinnedMesh mesh = new VxSkinnedMesh(allCommands, sourceMesh, skeleton, VxSkinningShader.getInstance());
 
             return new VxSkinnedModel(skeleton, mesh, animations);
         } finally {

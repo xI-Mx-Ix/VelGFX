@@ -13,10 +13,15 @@ import org.lwjgl.opengl.GL30;
  * <p>
  * This shader performs vertex skinning on the GPU and outputs the transformed
  * vertices via Transform Feedback to be rendered by the main pass.
+ * <p>
+ * This class operates as a Singleton to ensure only one instance of the
+ * skinning program exists within the OpenGL context.
  *
  * @author xI-Mx-Ix
  */
 public class VxSkinningShader extends VxShaderProgram {
+
+    private static VxSkinningShader instance;
 
     private static final int MAX_BONES = 100;
 
@@ -25,8 +30,36 @@ public class VxSkinningShader extends VxShaderProgram {
     private static final VxResourceLocation FRAGMENT_SOURCE =
             new VxResourceLocation("velgfx", "shaders/skinning.fsh");
 
-    public VxSkinningShader() {
+    /**
+     * Private constructor to enforce Singleton pattern.
+     */
+    private VxSkinningShader() {
         super(VERTEX_SOURCE, FRAGMENT_SOURCE);
+    }
+
+    /**
+     * Retrieves the global instance of the skinning shader.
+     * <p>
+     * If the instance does not exist, it is compiled and linked immediately.
+     * This method must be called from the main Render Thread.
+     *
+     * @return The singleton instance.
+     */
+    public static synchronized VxSkinningShader getInstance() {
+        if (instance == null) {
+            instance = new VxSkinningShader();
+        }
+        return instance;
+    }
+
+    /**
+     * Destroys the singleton instance and releases OpenGL resources.
+     */
+    public static synchronized void destroy() {
+        if (instance != null) {
+            instance.close();
+            instance = null;
+        }
     }
 
     /**
@@ -51,7 +84,7 @@ public class VxSkinningShader extends VxShaderProgram {
      * Configures the Transform Feedback varyings before linking the program.
      * <p>
      * This defines the structure of the data written to the Result VBO.
-     * The order here determines the offset calculation in {@code VxSkinnedMesh.setupResultAttributes}.
+     * The order here determines the offset calculation in the mesh implementation.
      *
      * @param programId The OpenGL program ID.
      */
@@ -71,7 +104,7 @@ public class VxSkinningShader extends VxShaderProgram {
     @Override
     protected void registerUniforms() {
         // Register array uniforms for bone matrices
-        // Assumes uniform name "u_BoneMatrices" as per latest shader logic
+        // Assumes uniform name "u_BoneMatrices" as per shader logic
         for (int i = 0; i < MAX_BONES; i++) {
             super.createUniform("u_BoneMatrices[" + i + "]");
         }
