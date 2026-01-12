@@ -20,50 +20,55 @@ import java.util.Map;
  * A custom texture loader that manages the lifecycle of OpenGL textures entirely
  * decoupled from Minecraft's TextureManager and NativeImage system.
  * <p>
- * It handles loading from the classpath via {@link VxResourceLocation}, decoding via
- * {@link VxNativeImage}, and uploading to the GPU using direct {@link GL11} calls.
+ * This class handles loading image data from the Java Classpath via {@link VxResourceLocation},
+ * decoding it using {@link VxNativeImage}, and uploading the raw bytes to the GPU
+ * using direct {@link GL11} commands.
+ * <p>
+ * It includes robust state management to ensure that pixel data is read correctly
+ * regardless of the previous state of the OpenGL context.
  *
  * @author xI-Mx-Ix
  */
 public class VxTextureLoader {
 
     /**
-     * Cache mapping resource locations to OpenGL texture IDs.
+     * Internal cache mapping resource locations to their generated OpenGL texture IDs.
+     * This prevents reloading the same asset multiple times from disk.
      */
     private static final Map<VxResourceLocation, Integer> TEXTURE_CACHE = new HashMap<>();
 
     /**
      * The resource location for the fallback white texture.
-     * This is used when a material does not define a diffuse texture.
+     * This is used when a material does not define a diffuse texture to ensure
+     * proper lighting calculations (multiplication by 1.0).
      */
     private static final VxResourceLocation WHITE_TEXTURE_LOCATION = new VxResourceLocation("assets/velgfx/renderer/white.png");
-    
-    // Magenta (0xAABBGGRR): A=FF, B=FF, G=00, R=FF
-    private static final int MAGENTA = 0xFFFF00FF; 
+
+    // Colors used for the missing texture pattern (Magenta/Black Checkerboard).
+    // Format: 0xAABBGGRR (Alpha, Blue, Green, Red)
+    private static final int MAGENTA = 0xFFFF00FF;
     private static final int BLACK   = 0xFF000000;
 
     /**
      * Retrieves or loads the OpenGL texture ID for the given location.
      * <p>
-     * If the texture has already been loaded, the cached ID is returned.
-     * Otherwise, it is loaded from disk (classpath) and uploaded to VRAM.
+     * If the texture has already been loaded, the cached ID is returned immediately.
+     * Otherwise, the file is loaded from the classpath, decoded, and uploaded to VRAM.
      * <p>
-     * If the provided location is null, the default white texture is returned
-     * to ensure the material's base color is rendered correctly.
+     * If the provided location is null, the default white texture is returned.
      *
      * @param location The custom resource location of the texture.
-     * @return The OpenGL texture ID.
+     * @return The OpenGL texture ID handle.
      */
     public static int getTexture(VxResourceLocation location) {
-        // If no texture is defined in the model/material, use the 1x1 white texture
-        // to ensure multiplication with the material color (Kd) works as intended.
+        // If no texture is defined in the model/material, use the 1x1 white texture.
         VxResourceLocation targetLocation = (location != null) ? location : WHITE_TEXTURE_LOCATION;
 
         if (TEXTURE_CACHE.containsKey(targetLocation)) {
             return TEXTURE_CACHE.get(targetLocation);
         }
 
-        // Ensure we are on the render thread before performing GL operations
+        // Ensure we are on the render thread before performing any GL operations.
         RenderSystem.assertOnRenderThread();
 
         int textureId = loadTexture(targetLocation);
@@ -72,21 +77,26 @@ public class VxTextureLoader {
     }
 
     /**
-     * Loads the image from the stream, uploads it to OpenGL, and returns the ID.
+     * loads the image stream from the classpath, decodes it, and uploads it.
+     * If the file is missing, a checkerboard pattern is generated instead.
+     *
+     * @param location The resource path.
+     * @return The GL Texture ID.
      */
     private static int loadTexture(VxResourceLocation location) {
         String path = location.getPath();
-        // Ensure absolute classpath path
+        // Ensure the path is absolute for ClassLoader lookup
         String classpathPath = path.startsWith("/") ? path : "/" + path;
 
-        // Try loading from classpath
+        // Try loading the raw bytes from the JAR/Classpath
         try (InputStream stream = VxTextureLoader.class.getResourceAsStream(classpathPath)) {
             if (stream == null) {
                 VelGFX.LOGGER.error("Texture not found in classpath: {}", location);
                 return generateMissingTexture();
             }
 
-            // Decode image using our custom STB wrapper
+            // Decode image using the custom STB wrapper.
+            // VxNativeImage is configured to always return 4-channel RGBA data.
             try (VxNativeImage image = VxNativeImage.read(stream)) {
                 return uploadToGPU(image);
             }
@@ -98,94 +108,103 @@ public class VxTextureLoader {
     }
 
     /**
-     * Generates a 2x2 magenta/black checkerboard texture to indicate missing assets.
+     * Generates a 2x2 magenta/black checkerboard texture to visually indicate missing assets.
      * <p>
      * Pattern:<br>
      * [Magenta, Black]<br>
      * [Black, Magenta]
      */
     private static int generateMissingTexture() {
-        // Create a 2x2 blank image
         try (VxNativeImage image = VxNativeImage.create(2, 2)) {
             image.setPixelRGBA(0, 0, MAGENTA);
             image.setPixelRGBA(1, 0, BLACK);
             image.setPixelRGBA(0, 1, BLACK);
             image.setPixelRGBA(1, 1, MAGENTA);
-            
+
             return uploadToGPU(image);
         }
     }
 
     /**
-     * Performs the actual OpenGL calls to create and populate the texture.
+     * Performs the low-level OpenGL operations to allocate a texture handle
+     * and upload the pixel data from the buffer.
      *
-     * @param image The decoded image data.
-     * @return The GL texture ID.
+     * @param image The decoded image data containing width, height, and the pixel buffer.
+     * @return The generated GL texture ID.
      */
     private static int uploadToGPU(VxNativeImage image) {
-        // 1. Generate Texture ID
+        // 1. Generate a new Texture Object ID
         int textureId = GL11.glGenTextures();
 
-        // 2. Bind Texture to Texture Unit 0 (state safe)
+        // 2. Bind the texture to the 2D target to modify its state
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId);
 
-        // 3. Set Texture Parameters
-        // Linear filtering with Mipmaps for Minification
+        // 3. Configure Texture Parameters
+        // Linear filtering with Mipmaps for Minification (smooths distant textures)
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR_MIPMAP_LINEAR);
-        // Linear filtering for Magnification
+        // Linear filtering for Magnification (smooths close-up textures)
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
 
-        // Repeat wrapping ensures textures tile correctly on models
+        // Repeat wrapping ensures textures tile correctly across geometry
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL11.GL_REPEAT);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL11.GL_REPEAT);
 
-        // Limit Mipmap levels to 4 to save memory, usually sufficient for object textures
+        // Limit Mipmap levels to 4 to balance visual quality and memory usage
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MAX_LEVEL, 4);
 
-        // 4. Upload Data
-        // STB loads as RGBA, 8 bits per channel.
+        // 4. Prepare Data for Upload
         ByteBuffer data = image.getPixelData();
+        // Rewind buffer to position 0 to ensure the read starts at the beginning
+        data.rewind();
 
-        // Set Unpack Alignment to 1.
-        // By default, OpenGL expects rows to be multiples of 4 bytes.
-        // If the image width is small (e.g., 1x1, 2x2) or odd, and the format is RGBA,
-        // this ensures the driver reads the data tightly packed without expecting padding bytes.
-        // This prevents access violations when reading past the buffer end.
-        GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 1);
+        // 5. Reset Pixel Storage Modes
+        // This step is critical. OpenGL maintains global state for how it unpacks pixel data.
+        // If other parts of the rendering engine (e.g. font rendering) set specific row lengths
+        // or skip values, they must be reset to 0 here.
+        // This ensures OpenGL reads the buffer as a tightly packed, contiguous array of bytes.
+        GL11.glPixelStorei(GL11.GL_UNPACK_ROW_LENGTH, 0);
+        GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_PIXELS, 0);
+        GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_ROWS, 0);
+
+        // Ensure 4-byte alignment, as RGBA data is always 4-byte aligned (32 bits per pixel)
+        GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4);
 
         try {
+            // 6. Upload the texture data to the GPU
             GL11.glTexImage2D(
-                    GL11.GL_TEXTURE_2D,
-                    0,                  // Mipmap Level 0 (Base)
-                    GL11.GL_RGBA8,      // Internal Format (How GPU stores it)
-                    image.getWidth(),
-                    image.getHeight(),
-                    0,                  // Border (Must be 0)
-                    GL11.GL_RGBA,       // Format (How we provide it)
-                    GL11.GL_UNSIGNED_BYTE, // Type (Byte per channel)
-                    data
+                    GL11.GL_TEXTURE_2D,     // Target
+                    0,                      // Level 0 (Base level)
+                    GL11.GL_RGBA8,          // Internal Format (GPU storage format)
+                    image.getWidth(),       // Width
+                    image.getHeight(),      // Height
+                    0,                      // Border (Must be 0)
+                    GL11.GL_RGBA,           // Format (Input data format)
+                    GL11.GL_UNSIGNED_BYTE,  // Type (Input data type per channel)
+                    data                    // The actual pixel data
             );
         } finally {
-            // Restore the default alignment of 4 to avoid side effects on other renderers
+            // Restore default alignment (Standard practice to leave state clean)
             GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4);
         }
 
-        // 5. Generate Mipmaps automatically
+        // 7. Generate Mipmaps based on the uploaded Level 0 data
         GL30.glGenerateMipmap(GL11.GL_TEXTURE_2D);
 
-        // 6. Unbind to prevent accidental modification
+        // 8. Unbind the texture to prevent accidental modification by subsequent GL calls
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
 
         return textureId;
     }
 
     /**
-     * Clears the cache and deletes all textures from GPU memory using direct GL calls.
-     * Should be called on resource reload or shutdown.
+     * Deletes all textures managed by this loader from GPU memory.
+     * <p>
+     * This should be called during resource reloads or when the engine shuts down
+     * to prevent VRAM leaks.
      */
     public static void clear() {
         RenderSystem.assertOnRenderThread();
-        
+
         for (int id : TEXTURE_CACHE.values()) {
             GL11.glDeleteTextures(id);
         }
