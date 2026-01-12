@@ -33,6 +33,14 @@ public class VxMaterial {
     // Using VxResourceLocation here allows us to bypass Minecraft's restriction on characters.
     public VxResourceLocation albedoMap = DEFAULT_WHITE;
 
+    /**
+     * The resource location for the Normal Map texture.
+     * <p>
+     * If this is null, {@link #ensureGenerated()} will create a flat (blue) normal map
+     * on the GPU to ensure shaders don't break.
+     */
+    public VxResourceLocation normalMap = null;
+
     // --- OpenGL Texture IDs ---
     public int albedoMapGlId = -1;
     public int normalMapGlId = -1;

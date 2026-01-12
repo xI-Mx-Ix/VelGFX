@@ -12,6 +12,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 
 /**
  * A standalone wrapper for off-heap image data, replacing Minecraft's NativeImage.
@@ -31,13 +33,13 @@ public class VxNativeImage implements AutoCloseable {
 
     private final int width;
     private final int height;
-    
+
     /**
      * Flag indicating if the memory was allocated by STB (requires stbi_image_free)
      * or by MemoryUtil (requires memFree).
      */
     private final boolean allocatedByStb;
-    
+
     private boolean isClosed = false;
 
     /**
@@ -73,22 +75,19 @@ public class VxNativeImage implements AutoCloseable {
     /**
      * Reads an image from an input stream using STBImage.
      * <p>
-     * The entire stream is read into a temporary buffer before being passed to STB.
+     * The stream is read directly into a resizing native buffer to avoid Java Heap allocation.
+     * Crucially, this method forces the image to be decoded as RGBA (4 channels) to ensure
+     * alignment with OpenGL texture uploads.
      *
      * @param stream The input stream containing the image file (PNG, JPG, etc.).
      * @return A new VxNativeImage instance.
      * @throws IOException If the stream cannot be read or decoding fails.
      */
     public static VxNativeImage read(InputStream stream) throws IOException {
-        ByteBuffer sourceBuffer = null;
-        try {
-            // 1. Read the stream into a Direct ByteBuffer for STB
-            byte[] bytes = stream.readAllBytes();
-            sourceBuffer = MemoryUtil.memAlloc(bytes.length);
-            sourceBuffer.put(bytes);
-            sourceBuffer.flip();
+        ByteBuffer sourceBuffer = readToBuffer(stream);
 
-            // 2. Prepare stack for output parameters (width, height, channels)
+        try {
+            // Prepare stack for output parameters (width, height, channels)
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 IntBuffer w = stack.mallocInt(1);
                 IntBuffer h = stack.mallocInt(1);
@@ -107,9 +106,7 @@ public class VxNativeImage implements AutoCloseable {
             }
         } finally {
             // Always free the temporary source buffer containing the raw file bytes
-            if (sourceBuffer != null) {
-                MemoryUtil.memFree(sourceBuffer);
-            }
+            MemoryUtil.memFree(sourceBuffer);
         }
     }
 
@@ -126,10 +123,10 @@ public class VxNativeImage implements AutoCloseable {
     public void setPixelRGBA(int x, int y, int color) {
         if (isClosed) throw new IllegalStateException("Image is closed");
         if (x < 0 || x >= width || y < 0 || y >= height) return;
-        
+
         // Calculate offset: (y * width + x) * 4 bytes
         int index = (x + y * width) * 4;
-        
+
         // Unpack integer into bytes (0xAABBGGRR)
         byte a = (byte) ((color >> 24) & 0xFF);
         byte b = (byte) ((color >> 16) & 0xFF);
@@ -159,6 +156,29 @@ public class VxNativeImage implements AutoCloseable {
 
     public int getHeight() {
         return height;
+    }
+
+    /**
+     * Reads an InputStream into a resizable DirectByteBuffer.
+     * This avoids creating large byte[] arrays on the Java Heap.
+     */
+    private static ByteBuffer readToBuffer(InputStream stream) throws IOException {
+        ReadableByteChannel rbc = Channels.newChannel(stream);
+        ByteBuffer buffer = MemoryUtil.memAlloc(8192); // Start with 8KB
+
+        while (true) {
+            int bytes = rbc.read(buffer);
+            if (bytes == -1) {
+                break;
+            }
+            if (buffer.remaining() == 0) {
+                // Resize buffer: double capacity
+                buffer = MemoryUtil.memRealloc(buffer, buffer.capacity() * 2);
+            }
+        }
+
+        buffer.flip();
+        return buffer;
     }
 
     /**

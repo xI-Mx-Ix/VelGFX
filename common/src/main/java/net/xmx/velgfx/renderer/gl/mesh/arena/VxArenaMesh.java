@@ -66,11 +66,20 @@ public class VxArenaMesh implements IVxRenderableMesh {
 
     /**
      * Initializes texture resources for the materials used by this mesh.
+     * Loads the normal map if defined, otherwise the material will generate a flat default later.
      */
     protected void initializeTextures() {
         for (VxDrawCommand command : this.allDrawCommands) {
             if (command.material != null) {
+                // 1. Load Albedo
                 command.material.albedoMapGlId = VxTextureLoader.getTexture(command.material.albedoMap);
+
+                // 2. Load Normal Map (if present in the model file)
+                if (command.material.normalMap != null) {
+                    command.material.normalMapGlId = VxTextureLoader.getTexture(command.material.normalMap);
+                }
+
+                // 3. Generate missing maps (Flat Normal / LabPBR Specular)
                 command.material.ensureGenerated();
             }
         }
