@@ -72,7 +72,9 @@ public class VxArenaMesh implements IVxRenderableMesh {
         for (VxDrawCommand command : this.allDrawCommands) {
             if (command.material != null) {
                 // 1. Load Albedo
-                command.material.albedoMapGlId = VxTextureLoader.getTexture(command.material.albedoMap);
+                if (command.material.albedoMapGlId == -1) {
+                    command.material.albedoMapGlId = VxTextureLoader.getTexture(command.material.albedoMap);
+                }
 
                 // 2. Load Normal Map (if present in the model file)
                 if (command.material.normalMap != null) {

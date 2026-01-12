@@ -50,6 +50,20 @@ public class VxTextureLoader {
     private static final int BLACK   = 0xFF000000;
 
     /**
+     * Uploads a native image to the GPU and returns the texture ID without caching it
+     * under a ResourceLocation.
+     * <p>
+     * This is primarily used for embedded model textures where no file path exists.
+     *
+     * @param image The image to upload.
+     * @return The generated OpenGL texture ID.
+     */
+    public static int uploadTexture(VxNativeImage image) {
+        RenderSystem.assertOnRenderThread();
+        return uploadToGPU(image);
+    }
+
+    /**
      * Retrieves or loads the OpenGL texture ID for the given location.
      * <p>
      * If the texture has already been loaded, the cached ID is returned immediately.

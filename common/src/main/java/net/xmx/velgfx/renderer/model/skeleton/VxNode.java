@@ -90,6 +90,26 @@ public class VxNode {
         return null;
     }
 
+    /**
+     * Creates a deep copy of this node and its children.
+     * <p>
+     * This is essential for instancing, as each model instance needs its own
+     * set of nodes to store unique animation states.
+     *
+     * @param newParent The parent for the new node (null for root).
+     * @return A new independent VxNode hierarchy.
+     */
+    public VxNode deepCopy(VxNode newParent) {
+        // Copy the local bind pose/transform using the copy constructor of Matrix4f
+        VxNode copy = new VxNode(this.name, newParent, new Matrix4f(this.localTransform));
+
+        // Recursively copy children
+        for (VxNode child : this.children) {
+            copy.addChild(child.deepCopy(copy));
+        }
+        return copy;
+    }
+
     public Matrix4f getLocalTransform() {
         return localTransform;
     }

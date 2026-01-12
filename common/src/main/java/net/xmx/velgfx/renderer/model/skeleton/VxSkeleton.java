@@ -5,6 +5,8 @@
 package net.xmx.velgfx.renderer.model.skeleton;
 
 import org.joml.Matrix4f;
+
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -45,10 +47,47 @@ public class VxSkeleton {
         for (int i = 0; i < bones.size(); i++) {
             VxBone bone = bones.get(i);
             bone.update(globalInverseTransform);
-            
+
             // Flatten the 4x4 matrix into the array at the correct offset
             bone.getFinalTransform().get(matrices, i * 16);
         }
+    }
+
+    /**
+     * Creates a deep copy of the skeleton.
+     * <p>
+     * This includes cloning the entire node hierarchy and re-linking the bone list
+     * to the new independent nodes. This is crucial for creating independent instances
+     * of a model that can be animated separately.
+     *
+     * @return A new independent VxSkeleton.
+     */
+    public VxSkeleton deepCopy() {
+        // 1. Deep copy the node hierarchy
+        VxNode newRoot = this.rootNode.deepCopy(null);
+
+        // 2. Re-create the bone list linked to the NEW nodes
+        List<VxBone> newBones = new ArrayList<>(this.bones.size());
+
+        for (VxBone originalBone : this.bones) {
+            // Find the node in the new hierarchy that matches the bone name
+            VxNode newNode = newRoot.findByName(originalBone.getName());
+
+            if (newNode == null) {
+                // Fallback (should logically not happen if hierarchy copy worked correctly)
+                newNode = newRoot;
+            }
+
+            // Create a new bone instance sharing the original OffsetMatrix (immutable) but using the new Node
+            newBones.add(new VxBone(
+                    originalBone.getId(),
+                    originalBone.getName(),
+                    new Matrix4f(originalBone.getOffsetMatrix()), // Deep copy matrix
+                    newNode
+            ));
+        }
+
+        return new VxSkeleton(newRoot, newBones, new Matrix4f(this.globalInverseTransform));
     }
 
     /**

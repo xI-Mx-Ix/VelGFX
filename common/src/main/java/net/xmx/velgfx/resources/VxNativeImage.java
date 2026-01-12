@@ -182,6 +182,33 @@ public class VxNativeImage implements AutoCloseable {
     }
 
     /**
+     * Reads an image directly from a ByteBuffer containing the raw file data (PNG/JPG bytes).
+     * <p>
+     * This is used for embedded textures in GLB files.
+     *
+     * @param buffer The buffer containing the encoded image file data.
+     * @return A new VxNativeImage instance.
+     * @throws IOException If decoding fails.
+     */
+    public static VxNativeImage read(ByteBuffer buffer) throws IOException {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            IntBuffer w = stack.mallocInt(1);
+            IntBuffer h = stack.mallocInt(1);
+            IntBuffer c = stack.mallocInt(1);
+
+            // STBI expects a direct buffer. Ensure we are reading from the current position.
+            // Force 4 channels (RGBA)
+            ByteBuffer imageData = STBImage.stbi_load_from_memory(buffer, w, h, c, 4);
+
+            if (imageData == null) {
+                throw new IOException("Failed to load embedded image via STB: " + STBImage.stbi_failure_reason());
+            }
+
+            return new VxNativeImage(imageData, w.get(0), h.get(0), true);
+        }
+    }
+
+    /**
      * Frees the native memory associated with this image.
      * Must be called when the image is no longer needed to prevent memory leaks.
      */

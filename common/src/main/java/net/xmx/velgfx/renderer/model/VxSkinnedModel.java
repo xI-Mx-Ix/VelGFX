@@ -15,6 +15,7 @@ import net.xmx.velgfx.renderer.gl.shader.VxSkinningShader;
 import net.xmx.velgfx.renderer.model.animation.VxAnimation;
 import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL40;
 
@@ -91,10 +92,15 @@ public class VxSkinnedModel extends VxModel {
         // This maps the output buffer data (Pos, Normal, UV, Tangent) for the main render pass.
         this.resultVaoId = GL30.glGenVertexArrays();
         GL30.glBindVertexArray(resultVaoId);
-        this.resultVbo.bind();
+
+        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, resultVbo.getVboId());
+
+        // Now configure the attribute pointers for resultVaoId
         VxSkinnedResultVertexLayout.getInstance().setupAttributes();
-        this.resultVbo.unbind();
+
+        // Unbind to seal state
         GL30.glBindVertexArray(0);
+        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
 
         // 3. Setup Transform Feedback (TFO)
         // Links the shader output slots to our Result VBO.
@@ -107,6 +113,15 @@ public class VxSkinnedModel extends VxModel {
         // We reuse the draw commands from the source mesh (materials, counts),
         // but render using our Result VAO ID via the standalone proxy class.
         this.renderProxy = new VxSkinnedResultMesh(this.resultVaoId, sourceMesh.getDrawCommands());
+    }
+
+    @Override
+    public VxSkinnedModel createInstance() {
+        // 1. Copy Skeleton (Nodes + Bones)
+        VxSkeleton newSkeleton = this.skeleton.deepCopy();
+
+        // 2. Return new model with shared source geometry but unique output buffers
+        return new VxSkinnedModel(newSkeleton, this.sourceMesh, this.animations);
     }
 
     /**
@@ -143,10 +158,11 @@ public class VxSkinnedModel extends VxModel {
 
         // Bind TFO to capture output
         GL40.glBindTransformFeedback(GL40.GL_TRANSFORM_FEEDBACK, tfoId);
+        GL30.glBindBufferBase(GL30.GL_TRANSFORM_FEEDBACK_BUFFER, 0, resultVbo.getVboId());
+
         GL40.glBeginTransformFeedback(GL11.GL_POINTS);
 
         // Calculate the absolute start vertex in the Arena Buffer
-        // We create a dummy command to get the absolute start vertex from the source mesh
         int startVertex = sourceMesh.getFinalVertexOffset(new VxDrawCommand(null, 0, 0));
         int vertexCount = (int) (sourceMesh.getSizeBytes() / VxSkinnedVertexLayout.STRIDE);
 

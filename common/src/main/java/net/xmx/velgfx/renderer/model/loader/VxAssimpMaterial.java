@@ -4,15 +4,23 @@
  */
 package net.xmx.velgfx.renderer.model.loader;
 
+import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
+import net.xmx.velgfx.resources.VxNativeImage;
 import net.xmx.velgfx.resources.VxResourceLocation;
+import net.xmx.velgfx.resources.VxTextureLoader;
 import org.lwjgl.assimp.*;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.system.MemoryUtil;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Handles the extraction of Materials (textures, colors, and scalar properties) from Assimp.
@@ -20,6 +28,9 @@ import java.util.List;
  * This class is responsible for parsing PBR properties such as Roughness and Metallic.
  * It supports standard PBR extensions in MTL/OBJ files and provides a fallback mechanism
  * to convert legacy Phong 'Shininess' values into PBR Roughness.
+ * <p>
+ * It also handles embedded textures (e.g. in GLB files) by extracting them directly
+ * from the AIScene and uploading them to the GPU immediately.
  *
  * @author xI-Mx-Ix
  */
@@ -36,6 +47,10 @@ public class VxAssimpMaterial {
         int numMaterials = scene.mNumMaterials();
         List<VxMaterial> result = new ArrayList<>(numMaterials);
         String modelDir = modelLocation.getDirectory();
+
+        // Local cache for embedded textures (Texture Index -> OpenGL ID) to avoid duplicates
+        // within the same model load cycle.
+        Map<Integer, Integer> embeddedTextureCache = new HashMap<>();
 
         for (int i = 0; i < numMaterials; i++) {
             AIMaterial aiMat = AIMaterial.create(scene.mMaterials().get(i));
@@ -95,7 +110,20 @@ public class VxAssimpMaterial {
             if (Assimp.aiGetMaterialTexture(aiMat, Assimp.aiTextureType_DIFFUSE, 0, path, (IntBuffer) null, null, null, null, null, null) == Assimp.aiReturn_SUCCESS) {
                 String rawPath = path.dataString();
                 if (!rawPath.isEmpty()) {
-                    mat.albedoMap = new VxResourceLocation(modelDir, rawPath);
+                    if (rawPath.startsWith("*")) {
+                        // Embedded Texture (e.g., *0, *1)
+                        try {
+                            int textureIndex = Integer.parseInt(rawPath.substring(1));
+                            mat.albedoMapGlId = loadEmbeddedTexture(scene, textureIndex, embeddedTextureCache);
+                            // Set to null to prevent VxArenaMesh from trying to load it as a file later
+                            mat.albedoMap = null;
+                        } catch (NumberFormatException e) {
+                            VelGFX.LOGGER.error("Failed to parse embedded texture index: " + rawPath);
+                        }
+                    } else {
+                        // Regular External File
+                        mat.albedoMap = new VxResourceLocation(modelDir, rawPath);
+                    }
                 }
             }
 
@@ -104,7 +132,13 @@ public class VxAssimpMaterial {
             if (Assimp.aiGetMaterialTexture(aiMat, Assimp.aiTextureType_NORMALS, 0, path, (IntBuffer) null, null, null, null, null, null) == Assimp.aiReturn_SUCCESS) {
                 String rawPath = path.dataString();
                 if (!rawPath.isEmpty()) {
-                    mat.normalMap = new VxResourceLocation(modelDir, rawPath);
+                    if (rawPath.startsWith("*")) {
+                        int textureIndex = Integer.parseInt(rawPath.substring(1));
+                        mat.normalMapGlId = loadEmbeddedTexture(scene, textureIndex, embeddedTextureCache);
+                        mat.normalMap = null;
+                    } else {
+                        mat.normalMap = new VxResourceLocation(modelDir, rawPath);
+                    }
                 }
             }
             path.free();
@@ -112,5 +146,52 @@ public class VxAssimpMaterial {
             result.add(mat);
         }
         return result;
+    }
+
+    /**
+     * Extracts and uploads an embedded texture from the Assimp scene.
+     *
+     * @param scene        The Assimp scene.
+     * @param textureIndex The index of the texture in the scene's texture array.
+     * @param cache        The local cache to prevent duplicate uploads.
+     * @return The OpenGL texture ID, or -1 if failed.
+     */
+    private static int loadEmbeddedTexture(AIScene scene, int textureIndex, Map<Integer, Integer> cache) {
+        if (cache.containsKey(textureIndex)) {
+            return cache.get(textureIndex);
+        }
+
+        if (scene.mTextures() == null || textureIndex < 0 || textureIndex >= scene.mNumTextures()) {
+            VelGFX.LOGGER.error("Invalid embedded texture index: {}", textureIndex);
+            return -1;
+        }
+
+        AITexture texture = AITexture.create(scene.mTextures().get(textureIndex));
+        int glId = -1;
+
+        // Check if compressed (mHeight == 0 means the buffer contains a file like PNG/JPG)
+        if (texture.mHeight() == 0) {
+            int sizeInBytes = texture.mWidth();
+
+            // Manually get the pointer address and wrap it in a ByteBuffer.
+            // This bypasses the AITexture.pcData() binding issues and treats the data as raw bytes.
+            long pcDataAddr = MemoryUtil.memGetAddress(texture.address() + AITexture.PCDATA);
+            ByteBuffer compressedData = MemoryUtil.memByteBuffer(pcDataAddr, sizeInBytes);
+
+            try (VxNativeImage image = VxNativeImage.read(compressedData)) {
+                glId = VxTextureLoader.uploadTexture(image);
+            } catch (IOException e) {
+                VelGFX.LOGGER.error("Failed to decode embedded texture #{}: {}", textureIndex, e.getMessage());
+            }
+        } else {
+            // Uncompressed ARGB8888 data (Rare in GLB/GLTF, but standard for some formats)
+            // Implementation for uncompressed embedded textures omitted for now.
+            VelGFX.LOGGER.warn("Uncompressed embedded textures are not yet implemented for index {}", textureIndex);
+        }
+
+        if (glId != -1) {
+            cache.put(textureIndex, glId);
+        }
+        return glId;
     }
 }

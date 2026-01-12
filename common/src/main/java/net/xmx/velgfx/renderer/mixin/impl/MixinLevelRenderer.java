@@ -23,7 +23,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * 2. AFTER_ENTITIES: Flushes the queue to draw meshes into the G-Buffers/World.
  * @author xI-Mx-Ix
  */
-@Mixin(LevelRenderer.class)
+@Mixin(value = LevelRenderer.class, priority = 1500)
 public class MixinLevelRenderer {
 
     /**

@@ -2,7 +2,7 @@
  * This file is part of VelGFX.
  * Licensed under LGPL 3.0.
  */
-package net.xmx.velgfx.example.body;
+package net.xmx.velgfx.example.body.soccerball;
 
 import com.github.stephengold.joltjni.BodyCreationSettings;
 import com.github.stephengold.joltjni.MassProperties;

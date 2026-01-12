@@ -76,6 +76,17 @@ public abstract class VxModel {
     }
 
     /**
+     * Creates an independent instance of this model.
+     * <p>
+     * The new instance shares heavy GPU resources (Mesh/Textures) but possesses
+     * its own Scene Graph (Nodes/Skeleton) and Animator. This allows the instance
+     * to play animations independently of others.
+     *
+     * @return A new model instance.
+     */
+    public abstract VxModel createInstance();
+
+    /**
      * Releases GPU resources associated with this model.
      */
     public void delete() {

@@ -63,6 +63,8 @@ public abstract class VxShaderProgram implements AutoCloseable {
         // Hook for subclasses to bind vertex attribute indices before linking
         bindAttributes();
 
+        preLink(programId);
+
         GL20.glLinkProgram(programId);
         if (GL20.glGetProgrami(programId, GL20.GL_LINK_STATUS) == GL20.GL_FALSE) {
             String log = GL20.glGetProgramInfoLog(programId);

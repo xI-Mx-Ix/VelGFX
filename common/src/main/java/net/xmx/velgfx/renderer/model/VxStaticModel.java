@@ -43,6 +43,22 @@ public class VxStaticModel extends VxModel {
     }
 
     @Override
+    public VxStaticModel createInstance() {
+        // 1. Deep copy the node hierarchy (Skeleton)
+        // This allows nodes to move independently (Rigid Body Animation) without affecting other instances.
+        VxSkeleton newSkeleton = this.skeleton.deepCopy();
+
+        // 2. Create new instance sharing the geometry
+        // We cast mesh to VxArenaMesh because VxStaticModel guarantees it uses Arena meshes.
+        return new VxStaticModel(
+                newSkeleton,
+                (VxArenaMesh) this.mesh,
+                this.animations,
+                this.nodeDrawCommands
+        );
+    }
+
+    @Override
     public void render(PoseStack poseStack, int packedLight) {
         // Safe cast check, though it should always be VxArenaMesh in this architecture
         if (mesh instanceof VxArenaMesh arenaMesh) {

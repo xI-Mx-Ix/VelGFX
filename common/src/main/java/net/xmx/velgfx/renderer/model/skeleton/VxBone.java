@@ -104,4 +104,13 @@ public class VxBone {
     public int getId() {
         return id;
     }
+
+    /**
+     * Gets the Inverse Bind Matrix (Offset Matrix).
+     *
+     * @return The offset matrix.
+     */
+    public Matrix4f getOffsetMatrix() {
+        return offsetMatrix;
+    }
 }
