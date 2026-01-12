@@ -1,0 +1,74 @@
+plugins {
+    id 'com.gradleup.shadow'
+}
+
+architectury {
+    platformSetupLoomIde()
+    fabric()
+}
+
+loom {
+    accessWidenerPath = project(":common").loom.accessWidenerPath
+
+    runs {
+        server {
+            runDir "run-server"
+        }
+        client {
+            runDir "run-client"
+            programArgs '--username', 'dev'
+        }
+    }
+}
+
+configurations {
+    common {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+    compileClasspath.extendsFrom common
+    runtimeClasspath.extendsFrom common
+    developmentFabric.extendsFrom common
+
+    shadowBundle {
+        canBeResolved = true
+        canBeConsumed = false
+    }
+}
+
+dependencies {
+    modImplementation "net.fabricmc:fabric-loader:$rootProject.fabric_loader_version"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:$rootProject.fabric_api_version"
+    modImplementation "dev.architectury:architectury:$rootProject.architectury_api_version"
+    modImplementation "dev.architectury:architectury-fabric:$rootProject.architectury_api_version"
+
+    modImplementation "maven.modrinth:velthoric:P7odF0XW"
+
+    common(project(path: ':common', configuration: 'namedElements')) { transitive false }
+
+    implementation project(path: ':fabric', configuration: 'namedElements')
+}
+
+processResources {
+    def propertiesToExpand = [
+            minecraft_version: rootProject.minecraft_version,
+            fabric_loader_version: rootProject.fabric_loader_version,
+            fabric_api_version: rootProject.fabric_api_version,
+            architectury_api_version: rootProject.architectury_api_version
+    ]
+
+    inputs.properties propertiesToExpand
+
+    filesMatching(['fabric.mod.json', 'pack.mcmeta']) {
+        expand propertiesToExpand + [project: project]
+    }
+}
+
+shadowJar {
+    configurations = [project.configurations.shadowBundle]
+    archiveClassifier = 'dev-shadow'
+}
+
+remapJar {
+    inputFile.set shadowJar.archiveFile
+}

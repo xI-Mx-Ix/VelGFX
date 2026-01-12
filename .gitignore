@@ -9,6 +9,10 @@ forge/build
 forge/.gradle
 neoforge/build
 neoforge/.gradle
+example-mod/.gradle
+example-mod/build
+example-mod/run-client
+example-mod/run-server
 
 # Run folders (temporary runtime folders created when starting Minecraft)
 forge/run

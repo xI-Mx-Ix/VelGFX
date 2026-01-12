@@ -43,8 +43,9 @@ subprojects {
     repositories {
         mavenCentral()
         maven { url = 'https://cursemaven.com'}
-        maven { url = 'https://maven.parchmentmc.org' }
-        maven { url = 'https://jitpack.io' }
+        maven { url = 'https://api.modrinth.com/maven'}
+        maven { url = 'https://maven.parchmentmc.org'}
+        maven { url = 'https://jitpack.io'}
         maven { url = 'https://s01.oss.sonatype.org/content/repositories/snapshots'}
     }
 

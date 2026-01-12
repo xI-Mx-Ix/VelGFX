@@ -52,9 +52,25 @@ dependencies {
     common(project(path: ':common', configuration: 'namedElements')) { transitive false }
     shadowBundle project(path: ':common', configuration: 'transformProductionFabric')
 
+    api("org.lwjgl:lwjgl-assimp:$lwjgl_version") {
+        exclude group: "org.lwjgl", module: "lwjgl"
+    }
+
+    api("org.lwjgl:lwjgl-assimp:$lwjgl_version:natives-windows")
+    api("org.lwjgl:lwjgl-assimp:$lwjgl_version:natives-macos")
+    api("org.lwjgl:lwjgl-assimp:$lwjgl_version:natives-macos-arm64")
+    api("org.lwjgl:lwjgl-assimp:$lwjgl_version:natives-linux")
+    api("org.lwjgl:lwjgl-assimp:$lwjgl_version:natives-linux-arm64")
+
     shadowBundle("org.lwjgl:lwjgl-assimp:$lwjgl_version") {
         exclude group: "org.lwjgl", module: "lwjgl"
     }
+
+    shadowBundle("org.lwjgl:lwjgl-assimp:$lwjgl_version:natives-windows")
+    shadowBundle("org.lwjgl:lwjgl-assimp:$lwjgl_version:natives-macos")
+    shadowBundle("org.lwjgl:lwjgl-assimp:$lwjgl_version:natives-macos-arm64")
+    shadowBundle("org.lwjgl:lwjgl-assimp:$lwjgl_version:natives-linux")
+    shadowBundle("org.lwjgl:lwjgl-assimp:$lwjgl_version:natives-linux-arm64")
 }
 
 processResources {
