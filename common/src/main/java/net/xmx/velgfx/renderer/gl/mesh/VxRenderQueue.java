@@ -160,12 +160,12 @@ public class VxRenderQueue {
      * @param packedLight The packed light value.
      */
     public void add(IVxRenderableMesh mesh, PoseStack poseStack, int packedLight) {
-        // We strictly check for VxArenaMesh as it is the unified implementation
-        if (mesh instanceof VxArenaMesh arenaMesh && !arenaMesh.isDeleted()) {
+        // Accept any mesh implementation that is not marked as deleted
+        if (mesh != null && !mesh.isDeleted()) {
             ensureCapacity(count + 1);
 
             // Store mesh reference
-            this.meshes[count] = arenaMesh;
+            this.meshes[count] = mesh;
 
             // Copy matrix data into the pre-allocated objects using .set() (Zero Allocation)
             this.modelMatrices[count].set(poseStack.last().pose());

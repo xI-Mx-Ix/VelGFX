@@ -84,21 +84,21 @@ public class VxArenaMesh implements IVxRenderableMesh {
     }
 
     /**
-     * Queues a specific named group of the mesh for rendering.
-     * Used primarily by {@link net.xmx.velgfx.renderer.model.VxStaticModel} for node-based animation.
+     * Queues a specific subset of draw commands for rendering.
+     * <p>
+     * This creates a lightweight proxy object (GroupView) that shares the parent's
+     * buffer configuration (VBO/VAO) but renders only the provided commands.
+     * This is essential for models where the grouping logic is managed externally.
      *
      * @param poseStack   The transformation stack.
      * @param packedLight The light value.
-     * @param groupName   The name of the group/node.
+     * @param commands    The specific list of draw commands to execute.
      */
-    public void queueRenderGroup(PoseStack poseStack, int packedLight, String groupName) {
-        if (isDeleted) return;
+    public void queueRenderSubset(PoseStack poseStack, int packedLight, List<VxDrawCommand> commands) {
+        if (isDeleted || commands == null || commands.isEmpty()) return;
 
-        List<VxDrawCommand> commands = groupDrawCommands.get(groupName);
-        if (commands != null && !commands.isEmpty()) {
-            // Create a lightweight view for this group
-            VxRenderQueue.getInstance().add(new GroupView(commands), poseStack, packedLight);
-        }
+        // Create a temporary view of this mesh for the specific subset of commands
+        VxRenderQueue.getInstance().add(new GroupView(commands), poseStack, packedLight);
     }
 
     @Override

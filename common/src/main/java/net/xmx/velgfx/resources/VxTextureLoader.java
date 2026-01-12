@@ -31,6 +31,12 @@ public class VxTextureLoader {
      * Cache mapping resource locations to OpenGL texture IDs.
      */
     private static final Map<VxResourceLocation, Integer> TEXTURE_CACHE = new HashMap<>();
+
+    /**
+     * The resource location for the fallback white texture.
+     * This is used when a material does not define a diffuse texture.
+     */
+    private static final VxResourceLocation WHITE_TEXTURE_LOCATION = new VxResourceLocation("assets/velgfx/renderer/white.png");
     
     // Magenta (0xAABBGGRR): A=FF, B=FF, G=00, R=FF
     private static final int MAGENTA = 0xFFFF00FF; 
@@ -41,20 +47,27 @@ public class VxTextureLoader {
      * <p>
      * If the texture has already been loaded, the cached ID is returned.
      * Otherwise, it is loaded from disk (classpath) and uploaded to VRAM.
+     * <p>
+     * If the provided location is null, the default white texture is returned
+     * to ensure the material's base color is rendered correctly.
      *
      * @param location The custom resource location of the texture.
      * @return The OpenGL texture ID.
      */
     public static int getTexture(VxResourceLocation location) {
-        if (TEXTURE_CACHE.containsKey(location)) {
-            return TEXTURE_CACHE.get(location);
+        // If no texture is defined in the model/material, use the 1x1 white texture
+        // to ensure multiplication with the material color (Kd) works as intended.
+        VxResourceLocation targetLocation = (location != null) ? location : WHITE_TEXTURE_LOCATION;
+
+        if (TEXTURE_CACHE.containsKey(targetLocation)) {
+            return TEXTURE_CACHE.get(targetLocation);
         }
 
         // Ensure we are on the render thread before performing GL operations
         RenderSystem.assertOnRenderThread();
 
-        int textureId = loadTexture(location);
-        TEXTURE_CACHE.put(location, textureId);
+        int textureId = loadTexture(targetLocation);
+        TEXTURE_CACHE.put(targetLocation, textureId);
         return textureId;
     }
 
@@ -112,7 +125,7 @@ public class VxTextureLoader {
     private static int uploadToGPU(VxNativeImage image) {
         // 1. Generate Texture ID
         int textureId = GL11.glGenTextures();
-        
+
         // 2. Bind Texture to Texture Unit 0 (state safe)
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId);
 
@@ -121,33 +134,41 @@ public class VxTextureLoader {
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR_MIPMAP_LINEAR);
         // Linear filtering for Magnification
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
-        
+
         // Repeat wrapping ensures textures tile correctly on models
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL11.GL_REPEAT);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL11.GL_REPEAT);
-        
+
         // Limit Mipmap levels to 4 to save memory, usually sufficient for object textures
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL12.GL_TEXTURE_MAX_LEVEL, 4);
 
         // 4. Upload Data
         // STB loads as RGBA, 8 bits per channel.
         ByteBuffer data = image.getPixelData();
-        
-        // glPixelStorei handles data alignment. Default is 4, which is fine for RGBA (4 bytes).
-        // If width was odd and RGB (3 bytes), we'd need to set UNPACK_ALIGNMENT to 1.
-        // Since we force RGBA, alignment is always 4-byte aligned per pixel.
 
-        GL11.glTexImage2D(
-            GL11.GL_TEXTURE_2D, 
-            0,                  // Mipmap Level 0 (Base)
-            GL11.GL_RGBA8,      // Internal Format (How GPU stores it)
-            image.getWidth(), 
-            image.getHeight(), 
-            0,                  // Border (Must be 0)
-            GL11.GL_RGBA,       // Format (How we provide it)
-            GL11.GL_UNSIGNED_BYTE, // Type (Byte per channel)
-            data
-        );
+        // Set Unpack Alignment to 1.
+        // By default, OpenGL expects rows to be multiples of 4 bytes.
+        // If the image width is small (e.g., 1x1, 2x2) or odd, and the format is RGBA,
+        // this ensures the driver reads the data tightly packed without expecting padding bytes.
+        // This prevents access violations when reading past the buffer end.
+        GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 1);
+
+        try {
+            GL11.glTexImage2D(
+                    GL11.GL_TEXTURE_2D,
+                    0,                  // Mipmap Level 0 (Base)
+                    GL11.GL_RGBA8,      // Internal Format (How GPU stores it)
+                    image.getWidth(),
+                    image.getHeight(),
+                    0,                  // Border (Must be 0)
+                    GL11.GL_RGBA,       // Format (How we provide it)
+                    GL11.GL_UNSIGNED_BYTE, // Type (Byte per channel)
+                    data
+            );
+        } finally {
+            // Restore the default alignment of 4 to avoid side effects on other renderers
+            GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4);
+        }
 
         // 5. Generate Mipmaps automatically
         GL30.glGenerateMipmap(GL11.GL_TEXTURE_2D);

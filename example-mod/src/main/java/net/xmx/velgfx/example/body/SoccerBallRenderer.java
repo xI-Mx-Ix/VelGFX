@@ -52,10 +52,7 @@ public class SoccerBallRenderer extends VxRigidBodyRenderer<SoccerBallRigidBody>
         if (sphereModel != null) {
             poseStack.pushPose();
 
-            // Apply interpolated position and rotation from physics
-            RVec3 renderPosition = renderState.transform.getTranslation();
             Quat renderRotation = renderState.transform.getRotation();
-            poseStack.translate(renderPosition.x(), renderPosition.y(), renderPosition.z());
             poseStack.mulPose(new Quaternionf(
                     renderRotation.getX(),
                     renderRotation.getY(),

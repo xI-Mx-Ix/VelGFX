@@ -60,10 +60,12 @@ public class VxStaticModel extends VxModel {
         Matrix4f localTransform = node.getLocalTransform();
         poseStack.mulPose(localTransform);
 
-        // Render geometry associated with this specific node
-        if (nodeDrawCommands.containsKey(node.getName())) {
+        // Retrieve the specific draw commands associated with this node from the model's internal map
+        List<VxDrawCommand> commands = nodeDrawCommands.get(node.getName());
+
+        if (commands != null && !commands.isEmpty()) {
             // Queue only the specific parts of the mesh belonging to this node
-            arenaMesh.queueRenderGroup(poseStack, packedLight, node.getName());
+            arenaMesh.queueRenderSubset(poseStack, packedLight, commands);
         }
 
         // Process children
