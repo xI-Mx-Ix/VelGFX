@@ -48,6 +48,8 @@ public class VxSkinnedResultVertexLayout implements IVxVertexLayout {
         GL30.glEnableVertexAttribArray(0);
         GL30.glVertexAttribPointer(0, 3, GL11.GL_FLOAT, false, STRIDE, 0);
 
+        GL30.glDisableVertexAttribArray(1);
+
         // 2. Normal (vec3) -> Offset 12
         GL30.glEnableVertexAttribArray(5); // Location 5 is standard for Normals in this engine
         GL30.glVertexAttribPointer(5, 3, GL11.GL_FLOAT, false, STRIDE, 12);

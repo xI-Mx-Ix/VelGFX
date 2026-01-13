@@ -264,6 +264,8 @@ public class VxRenderQueue {
             shader.setSampler("Sampler" + i, RenderSystem.getShaderTexture(i));
         }
 
+        GL30.glVertexAttrib4f(1, 1.0f, 1.0f, 1.0f, 1.0f);
+
         // 2. Iterate over queued items
         for (int i = 0; i < count; i++) {
             IVxRenderableMesh  mesh = this.meshes[i];
@@ -364,6 +366,8 @@ public class VxRenderQueue {
             shader.setSampler("Sampler" + i, RenderSystem.getShaderTexture(i));
         }
         shader.apply();
+
+        GL30.glVertexAttrib4f(1, 1.0f, 1.0f, 1.0f, 1.0f);
 
         // 2. Dynamic PBR Unit Resolution (Cached)
         // Query the active shader program to find where it expects PBR textures.
