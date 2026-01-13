@@ -6,30 +6,32 @@ package net.xmx.velgfx.renderer.model;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
-import net.xmx.velgfx.renderer.gl.VxVertexBuffer;
 import net.xmx.velgfx.renderer.gl.layout.VxSkinnedResultVertexLayout;
 import net.xmx.velgfx.renderer.gl.layout.VxSkinnedVertexLayout;
-import net.xmx.velgfx.renderer.gl.mesh.skinning.VxSkinnedResultMesh;
 import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaMesh;
+import net.xmx.velgfx.renderer.gl.mesh.arena.VxMemorySegment;
+import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxSkinningArena;
+import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxSkinnedResultMesh;
 import net.xmx.velgfx.renderer.gl.shader.VxSkinningShader;
 import net.xmx.velgfx.renderer.model.animation.VxAnimation;
 import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
 import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL40;
 
 import java.util.Map;
 
 /**
- * A model capable of hardware vertex skinning via Transform Feedback.
+ * A model capable of hardware vertex skinning via Transform Feedback, utilizing the
+ * centralized {@link VxSkinningArena} for memory management.
  * <p>
  * This class orchestrates the animation pipeline:
  * <ol>
  *     <li>Updates the {@link VxSkeleton} based on animation time.</li>
- *     <li>Executes a Compute Pass using {@link VxSkinningShader}, reading from the {@code sourceMesh} (Arena).</li>
- *     <li>Captures the transformed vertices into the internal {@code resultVbo}.</li>
- *     <li>Submits a proxy mesh pointing to the {@code resultVbo} to the render queue.</li>
+ *     <li>Allocates a dynamic segment in the global Skinning Arena (instead of owning a private VBO).</li>
+ *     <li>Executes a Compute Pass using {@link VxSkinningShader}, reading from the {@code sourceMesh} (Arena)
+ *     and writing into the allocated {@code resultSegment}.</li>
+ *     <li>Submits a proxy mesh (which references the global Arena VAO) to the render queue.</li>
  * </ol>
  *
  * @author xI-Mx-Ix
@@ -45,24 +47,14 @@ public class VxSkinnedModel extends VxModel {
     private final VxArenaMesh sourceMesh;
 
     /**
-     * A dynamic buffer that stores the per-frame transformed geometry.
-     * This is the <b>Output</b> of the skinning shader.
+     * The allocated memory segment in the global {@link VxSkinningArena}.
+     * This acts as the destination for the Transform Feedback operation for the current frame.
      */
-    private final VxVertexBuffer resultVbo;
-
-    /**
-     * The VAO configured to render the data in {@code resultVbo}.
-     */
-    private final int resultVaoId;
-
-    /**
-     * The Transform Feedback Object (TFO) used to capture shader output.
-     */
-    private final int tfoId;
+    private final VxMemorySegment resultSegment;
 
     /**
      * A lightweight proxy object submitted to the render queue.
-     * It redirects draw calls to the {@code resultVaoId} instead of the arena's VAO.
+     * It redirects draw calls to the Arena's shared VAO with offsets calculated from the {@code resultSegment}.
      */
     private final VxSkinnedResultMesh renderProxy;
 
@@ -83,39 +75,21 @@ public class VxSkinnedModel extends VxModel {
         this.skeleton = skeleton;
         this.sourceMesh = sourceMesh;
 
-        // 1. Allocate Result Buffer (Dynamic)
-        // Calculates the required size based on the vertex count and the output stride (48 bytes).
+        // 1. Calculate the required size for the result buffer
+        // Input Size (Vertices) * Output Stride (48 bytes)
         int vertexCount = (int) (sourceMesh.getSizeBytes() / VxSkinnedVertexLayout.STRIDE);
-        this.resultVbo = new VxVertexBuffer(vertexCount * VxSkinnedResultVertexLayout.STRIDE, true);
+        long requiredBytes = (long) vertexCount * VxSkinnedResultVertexLayout.STRIDE;
 
-        // 2. Setup Result VAO (Output Layout)
-        // Configures the VAO to interpret the Transform Feedback output for the main render pass.
-        this.resultVaoId = GL30.glGenVertexArrays();
-        GL30.glBindVertexArray(resultVaoId);
+        // 2. Allocate memory segment in the global Skinning Arena
+        this.resultSegment = VxSkinningArena.getInstance().allocate(requiredBytes);
 
-        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, resultVbo.getVboId());
+        // 3. Create Render Proxy
+        // The proxy acts as a view into the Arena for this specific model instance
+        this.renderProxy = new VxSkinnedResultMesh(this.resultSegment, sourceMesh.getDrawCommands());
 
-        // Now configure the attribute pointers for resultVaoId
-        VxSkinnedResultVertexLayout.getInstance().setupAttributes();
-
-        // Unbind to seal the VAO state
-        GL30.glBindVertexArray(0);
-        GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
-
-        // 3. Setup Transform Feedback (TFO)
-        // Links the shader output slots to the dedicated Result VBO.
-        this.tfoId = GL40.glGenTransformFeedbacks();
-        GL40.glBindTransformFeedback(GL40.GL_TRANSFORM_FEEDBACK, tfoId);
-        GL30.glBindBufferBase(GL30.GL_TRANSFORM_FEEDBACK_BUFFER, 0, resultVbo.getVboId());
-        GL40.glBindTransformFeedback(GL40.GL_TRANSFORM_FEEDBACK, 0);
-
-        // 4. Create Render Proxy
-        this.renderProxy = new VxSkinnedResultMesh(this.resultVaoId, sourceMesh.getDrawCommands());
-
-        // 5. Initialize Hierarchy State
+        // 4. Initialize Hierarchy State
         // Immediately calculates the global transformations for the skeleton using the Bind Pose.
-        // This ensures that the bone matrices are valid and the model is visible (in T-Pose)
-        // even before the first call to update() or playAnimation() occurs.
+        // This ensures that the bone matrices are valid even before the first animation update.
         this.skeleton.getRootNode().updateHierarchy(null);
     }
 
@@ -124,7 +98,7 @@ public class VxSkinnedModel extends VxModel {
         // 1. Copy Skeleton (Nodes + Bones)
         VxSkeleton newSkeleton = this.skeleton.deepCopy();
 
-        // 2. Return new model with shared source geometry but unique output buffers
+        // 2. Return new model with shared source geometry but unique output segment
         return new VxSkinnedModel(newSkeleton, this.sourceMesh, this.animations);
     }
 
@@ -147,34 +121,39 @@ public class VxSkinnedModel extends VxModel {
 
     /**
      * Executes the actual compute pass on the GPU.
-     * Reads from Source Arena -> Writes to Result VBO.
+     * Reads from Source Arena -> Writes to the allocated Segment in Skinning Arena.
      */
     private void performSkinningPass() {
+        VxSkinningArena arena = VxSkinningArena.getInstance();
         VxSkinningShader shader = VxSkinningShader.getInstance();
+
         shader.bind();
         shader.loadJointTransforms(boneMatrices);
 
         // Disable rasterization because we are only processing vertices, not drawing pixels.
         GL11.glEnable(GL30.GL_RASTERIZER_DISCARD);
 
-        // Bind Source Data (Bind Pose from Arena)
+        // 1. Bind Source Data (Bind Pose from Arena)
         sourceMesh.setupVaoState();
 
-        // Bind TFO to capture output
-        GL40.glBindTransformFeedback(GL40.GL_TRANSFORM_FEEDBACK, tfoId);
-        GL30.glBindBufferBase(GL30.GL_TRANSFORM_FEEDBACK_BUFFER, 0, resultVbo.getVboId());
+        // 2. Bind Output Data (Specific Segment in Giant Buffer)
+        // This sets up the Global TFO to point to our specific slice of the VBO.
+        arena.bindForFeedback(resultSegment);
 
+        // 3. Begin Transform Feedback
+        // We use GL_POINTS to process vertices one-by-one.
         GL40.glBeginTransformFeedback(GL11.GL_POINTS);
 
-        // Calculate the absolute start vertex in the Arena Buffer
+        // Calculate the absolute start vertex in the Source Arena Buffer
         int startVertex = sourceMesh.getFinalVertexOffset(new VxDrawCommand(null, 0, 0));
         int vertexCount = (int) (sourceMesh.getSizeBytes() / VxSkinnedVertexLayout.STRIDE);
 
         // Draw points to trigger the vertex shader for every vertex
         GL11.glDrawArrays(GL11.GL_POINTS, startVertex, vertexCount);
 
+        // 4. End Feedback and Cleanup
         GL40.glEndTransformFeedback();
-        GL40.glBindTransformFeedback(GL40.GL_TRANSFORM_FEEDBACK, 0);
+        arena.unbindFeedback();
 
         // Re-enable rasterization for the actual rendering pass
         GL11.glDisable(GL30.GL_RASTERIZER_DISCARD);
@@ -185,7 +164,7 @@ public class VxSkinnedModel extends VxModel {
      * Renders the model.
      * <p>
      * Instead of queuing the source mesh (which holds bind pose), we queue the
-     * {@code renderProxy} which points to the transformed data in the Result VBO.
+     * {@code renderProxy} which points to the transformed data in the Skinning Arena.
      *
      * @param poseStack   The current transformation stack.
      * @param packedLight The packed light value.
@@ -200,14 +179,14 @@ public class VxSkinnedModel extends VxModel {
      */
     @Override
     public void delete() {
-        // Free the source memory in the arena
-        sourceMesh.delete();
+        // Return the allocated segment to the Arena pool
+        VxSkinningArena.getInstance().free(resultSegment);
 
-        // Delete dedicated resources
-        resultVbo.delete();
-        GL30.glDeleteVertexArrays(resultVaoId);
-        GL40.glDeleteTransformFeedbacks(tfoId);
-        // The renderProxy doesn't own resources, so we don't call delete on it.
+        // Mark the proxy as deleted to prevent rendering
+        renderProxy.delete();
+
+        // Note: The sourceMesh is shared among instances and managed by VxArenaManager,
+        // so we do not delete it here.
     }
 
     public VxSkeleton getSkeleton() {
