@@ -64,6 +64,10 @@ public class VxStaticModel extends VxModel {
         if (mesh instanceof VxArenaMesh arenaMesh) {
             traverseAndRender(rootNode, poseStack, packedLight, arenaMesh);
         }
+
+        // Render attachments (Sockets)
+        // Note: For static models, sockets move with the rigid body hierarchy.
+        renderAttachments(poseStack, packedLight);
     }
 
     /**

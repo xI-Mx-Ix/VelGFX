@@ -99,6 +99,8 @@ public class VxSkinnedModel extends VxModel {
         VxSkeleton newSkeleton = this.skeleton.deepCopy();
 
         // 2. Return new model with shared source geometry but unique output segment
+        // Note: Sockets are NOT copied automatically as they may need
+        // different attachments per instance. They must be re-created by the user if needed.
         return new VxSkinnedModel(newSkeleton, this.sourceMesh, this.animations);
     }
 
@@ -109,7 +111,7 @@ public class VxSkinnedModel extends VxModel {
      */
     @Override
     public void update(float dt) {
-        // 1. CPU Animation Update (interpolate keyframes, update node matrices)
+        // 1. CPU Animation Update (interpolate keyframes, blending, update node matrices)
         super.update(dt);
 
         // 2. Flatten bone matrices for upload
@@ -171,7 +173,11 @@ public class VxSkinnedModel extends VxModel {
      */
     @Override
     public void render(PoseStack poseStack, int packedLight) {
+        // 1. Render the main skinned character mesh
         renderProxy.queueRender(poseStack, packedLight);
+
+        // 2. Render any attachments (weapons, items) linked to the sockets
+        renderAttachments(poseStack, packedLight);
     }
 
     /**
@@ -184,6 +190,9 @@ public class VxSkinnedModel extends VxModel {
 
         // Mark the proxy as deleted to prevent rendering
         renderProxy.delete();
+
+        // Call super to clean up attachments
+        super.delete();
 
         // Note: The sourceMesh is shared among instances and managed by VxArenaManager,
         // so we do not delete it here.
