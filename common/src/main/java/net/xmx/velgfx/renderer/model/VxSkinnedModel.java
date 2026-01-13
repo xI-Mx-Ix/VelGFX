@@ -72,7 +72,7 @@ public class VxSkinnedModel extends VxModel {
     private final float[] boneMatrices = new float[100 * 16];
 
     /**
-     * Constructs a new Skinned Model.
+     * Constructs a new Skinned Model and initializes the skeletal state.
      *
      * @param skeleton   The skeleton hierarchy containing bones and nodes.
      * @param sourceMesh The source mesh handle located in the Skinned Arena Buffer.
@@ -84,12 +84,12 @@ public class VxSkinnedModel extends VxModel {
         this.sourceMesh = sourceMesh;
 
         // 1. Allocate Result Buffer (Dynamic)
-        // Size calculation: Vertices * Result Stride (48 bytes).
+        // Calculates the required size based on the vertex count and the output stride (48 bytes).
         int vertexCount = (int) (sourceMesh.getSizeBytes() / VxSkinnedVertexLayout.STRIDE);
         this.resultVbo = new VxVertexBuffer(vertexCount * VxSkinnedResultVertexLayout.STRIDE, true);
 
         // 2. Setup Result VAO (Output Layout)
-        // This maps the output buffer data (Pos, Normal, UV, Tangent) for the main render pass.
+        // Configures the VAO to interpret the Transform Feedback output for the main render pass.
         this.resultVaoId = GL30.glGenVertexArrays();
         GL30.glBindVertexArray(resultVaoId);
 
@@ -98,21 +98,25 @@ public class VxSkinnedModel extends VxModel {
         // Now configure the attribute pointers for resultVaoId
         VxSkinnedResultVertexLayout.getInstance().setupAttributes();
 
-        // Unbind to seal state
+        // Unbind to seal the VAO state
         GL30.glBindVertexArray(0);
         GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
 
         // 3. Setup Transform Feedback (TFO)
-        // Links the shader output slots to our Result VBO.
+        // Links the shader output slots to the dedicated Result VBO.
         this.tfoId = GL40.glGenTransformFeedbacks();
         GL40.glBindTransformFeedback(GL40.GL_TRANSFORM_FEEDBACK, tfoId);
         GL30.glBindBufferBase(GL30.GL_TRANSFORM_FEEDBACK_BUFFER, 0, resultVbo.getVboId());
         GL40.glBindTransformFeedback(GL40.GL_TRANSFORM_FEEDBACK, 0);
 
         // 4. Create Render Proxy
-        // We reuse the draw commands from the source mesh (materials, counts),
-        // but render using our Result VAO ID via the standalone proxy class.
         this.renderProxy = new VxSkinnedResultMesh(this.resultVaoId, sourceMesh.getDrawCommands());
+
+        // 5. Initialize Hierarchy State
+        // Immediately calculates the global transformations for the skeleton using the Bind Pose.
+        // This ensures that the bone matrices are valid and the model is visible (in T-Pose)
+        // even before the first call to update() or playAnimation() occurs.
+        this.skeleton.getRootNode().updateHierarchy(null);
     }
 
     @Override

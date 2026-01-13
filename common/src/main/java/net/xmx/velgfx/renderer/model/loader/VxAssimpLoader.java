@@ -52,8 +52,6 @@ public class VxAssimpLoader {
      *     <li>{@link Assimp#aiProcess_JoinIdenticalVertices}: Optimizes the mesh by identifying and merging duplicate vertices.</li>
      *     <li>{@link Assimp#aiProcess_GlobalScale}: Applies global scaling units defined in the metadata (e.g., converting centimeters to meters).</li>
      *     <li>{@link Assimp#aiProcess_FlipUVs}: Flips the Y-axis of texture coordinates for OpenGL compatibility.</li>
-     *     <li>{@link Assimp#aiProcess_PreTransformVertices}: Traverses the scene graph and bakes all node transformations (rotation, scaling, translation) directly into the mesh vertices.
-     *         This ensures that models from formats like GLTF, which often rely on complex node hierarchies for sizing, are loaded with the correct world dimensions.</li>
      * </ul>
      */
     private static final int POST_PROCESS_FLAGS = Assimp.aiProcess_Triangulate |
@@ -62,8 +60,7 @@ public class VxAssimpLoader {
             Assimp.aiProcess_LimitBoneWeights |
             Assimp.aiProcess_JoinIdenticalVertices |
             Assimp.aiProcess_GlobalScale |
-            Assimp.aiProcess_FlipUVs |
-            Assimp.aiProcess_PreTransformVertices;
+            Assimp.aiProcess_FlipUVs;
 
     /**
      * Private constructor to prevent instantiation.
@@ -87,8 +84,6 @@ public class VxAssimpLoader {
         String rawPath = location.getPath();
         String fileName = rawPath.substring(rawPath.lastIndexOf('/') + 1);
 
-        VelGFX.LOGGER.info("Starting Assimp load for: " + fileName);
-
         // 2. Import Scene via Assimp
         AIScene scene = Assimp.aiImportFileEx(fileName, POST_PROCESS_FLAGS, fileIo);
 
@@ -107,7 +102,7 @@ public class VxAssimpLoader {
 
             // Safety Check
             if (geometryBuffer.limit() == 0) {
-                VelGFX.LOGGER.warn("LOADER WARNING: Model '{}' loaded with 0 vertices!", location);
+                VelGFX.LOGGER.warn("Model '{}' loaded with 0 vertices!", location);
             } else {
                 VelGFX.LOGGER.info("Successfully loaded geometry: {} vertices.", geometryBuffer.limit() / VxStaticVertexLayout.STRIDE);
             }

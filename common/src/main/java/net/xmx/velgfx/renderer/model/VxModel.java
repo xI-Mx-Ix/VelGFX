@@ -100,4 +100,28 @@ public abstract class VxModel {
     public IVxRenderableMesh getMesh() {
         return mesh;
     }
+
+    /**
+     * Retrieves the map of available animation clips.
+     * <p>
+     * This provides access to the raw animation data, allowing external controllers
+     * (such as renderers) to inspect available animation names and select the appropriate
+     * clip to play based on the entity's state.
+     *
+     * @return An unmodifiable view or direct reference to the animation map.
+     */
+    public Map<String, VxAnimation> getAnimations() {
+        return animations;
+    }
+
+    /**
+     * Retrieves the Animator instance controlling this model.
+     * <p>
+     * Use this to control playback speed, pause state, or manually set the animation time.
+     *
+     * @return The animator instance.
+     */
+    public VxAnimator getAnimator() {
+        return animator;
+    }
 }
