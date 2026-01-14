@@ -74,7 +74,7 @@ public class VxAssimpMaterial {
             }
             color.free();
 
-            // Retrieve scalar PBR properties (Roughness, Metallic)
+            // Retrieve scalar PBR properties (Roughness, Metallic, DoubleSided)
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 FloatBuffer val = stack.mallocFloat(1);
                 IntBuffer size = stack.mallocInt(1);
@@ -102,6 +102,13 @@ public class VxAssimpMaterial {
                 size.put(0, 1);
                 if (Assimp.aiGetMaterialFloatArray(aiMat, Assimp.AI_MATKEY_METALLIC_FACTOR, Assimp.aiTextureType_NONE, 0, val, size) == Assimp.aiReturn_SUCCESS) {
                     mat.metallicFactor = val.get(0);
+                }
+
+                // Check for double sided flag
+                IntBuffer intVal = stack.mallocInt(1);
+                size.put(0, 1);
+                if (Assimp.aiGetMaterialIntegerArray(aiMat, Assimp.AI_MATKEY_TWOSIDED, Assimp.aiTextureType_NONE, 0, intVal, size) == Assimp.aiReturn_SUCCESS) {
+                    mat.doubleSided = intVal.get(0) != 0;
                 }
             }
 

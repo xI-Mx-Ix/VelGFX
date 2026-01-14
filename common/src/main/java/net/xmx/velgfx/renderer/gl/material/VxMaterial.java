@@ -20,45 +20,58 @@ import org.lwjgl.opengl.GL11;
 public class VxMaterial {
 
     /**
-     * A default resource location pointing to a simple white texture.
+     * Default resource location pointing to a simple white texture.
      */
-    public static final VxResourceLocation DEFAULT_WHITE = new VxResourceLocation("assets/" + VelGFX.MODID + "/renderer/white.png");
+    public static final VxResourceLocation DEFAULT_WHITE =
+            new VxResourceLocation(VelGFX.MODID, "/renderer/white.png");
 
     /**
-     * The unique name of the material.
+     * The unique name of this material.
      */
     public final String name;
 
-    // --- Texture Maps ---
-    // Using VxResourceLocation here allows us to bypass Minecraft's restriction on characters.
+    /**
+     * Resource location of the albedo (base color) texture.
+     */
     public VxResourceLocation albedoMap = DEFAULT_WHITE;
 
     /**
-     * The resource location for the Normal Map texture.
-     * <p>
-     * If this is null, {@link #ensureGenerated()} will create a flat (blue) normal map
-     * on the GPU to ensure shaders don't break.
+     * Whether the material should be rendered double-sided.
+     */
+    public boolean doubleSided = false;
+
+    /**
+     * Resource location of the normal map texture.
      */
     public VxResourceLocation normalMap = null;
 
-    // --- OpenGL Texture IDs ---
+    /**
+     * OpenGL texture ID of the albedo map.
+     */
     public int albedoMapGlId = -1;
+
+    /**
+     * OpenGL texture ID of the normal map.
+     */
     public int normalMapGlId = -1;
+
+    /**
+     * OpenGL texture ID of the specular map.
+     */
     public int specularMapGlId = -1;
 
-    // --- Scalar Factors ---
     /**
-     * The base color factor (RGBA). Defaults to white [1.0, 1.0, 1.0, 1.0].
+     * Base color factor in RGBA format.
      */
     public final float[] baseColorFactor = {1.0f, 1.0f, 1.0f, 1.0f};
 
     /**
-     * The metallic factor (0.0 = dielectric, 1.0 = metal). Defaults to 0.0.
+     * Metallic factor of the material.
      */
     public float metallicFactor = 0.0f;
 
     /**
-     * The roughness factor (0.0 = smooth, 1.0 = rough). Defaults to 1.0.
+     * Roughness factor of the material.
      */
     public float roughnessFactor = 1.0f;
 

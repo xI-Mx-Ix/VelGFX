@@ -264,6 +264,10 @@ public class VxRenderQueue {
 
         GL30.glVertexAttrib4f(1, 1.0f, 1.0f, 1.0f, 1.0f);
 
+        // Track the current culling state to avoid redundant GL calls.
+        // setupCommonRenderState enables culling by default.
+        boolean isCullingEnabled = true;
+
         // 2. Iterate over queued items
         for (int i = 0; i < count; i++) {
             IVxRenderableMesh mesh = this.meshes[i];
@@ -320,6 +324,17 @@ public class VxRenderQueue {
                 // Resolve relative offsets to absolute offsets using interface method
                 VxDrawCommand command = mesh.resolveCommand(rawCommand);
 
+                // Only change GL state if the material requirement differs from the current state
+                boolean shouldCull = !command.material.doubleSided;
+                if (shouldCull != isCullingEnabled) {
+                    if (shouldCull) {
+                        RenderSystem.enableCull();
+                    } else {
+                        RenderSystem.disableCull();
+                    }
+                    isCullingEnabled = shouldCull;
+                }
+
                 RenderSystem.setShaderTexture(0, command.material.albedoMapGlId);
 
                 if (shader.COLOR_MODULATOR != null) {
@@ -343,6 +358,11 @@ public class VxRenderQueue {
 
             // Re-enable UV2 array for safety
             GL30.glEnableVertexAttribArray(AT_UV2);
+        }
+
+        // Ensure global state is restored if it was left disabled
+        if (!isCullingEnabled) {
+            RenderSystem.enableCull();
         }
 
         shader.clear();
@@ -399,6 +419,9 @@ public class VxRenderQueue {
             }
         }
 
+        // Track the current culling state.
+        boolean isCullingEnabled = true;
+
         // 3. Render Loop
         for (int i = 0; i < count; i++) {
             IVxRenderableMesh mesh = this.meshes[i];
@@ -439,6 +462,17 @@ public class VxRenderQueue {
 
                 VxMaterial material = command.material;
 
+                // Only change GL state if the material requirement differs from the current state
+                boolean shouldCull = !material.doubleSided;
+                if (shouldCull != isCullingEnabled) {
+                    if (shouldCull) {
+                        RenderSystem.enableCull();
+                    } else {
+                        RenderSystem.disableCull();
+                    }
+                    isCullingEnabled = shouldCull;
+                }
+
                 if (shader.COLOR_MODULATOR != null) {
                     shader.COLOR_MODULATOR.set(material.baseColorFactor);
                 }
@@ -476,6 +510,11 @@ public class VxRenderQueue {
 
             // Restore State
             GL30.glEnableVertexAttribArray(AT_UV2);
+        }
+
+        // Ensure global state is restored if it was left disabled
+        if (!isCullingEnabled) {
+            RenderSystem.enableCull();
         }
 
         shader.clear();
