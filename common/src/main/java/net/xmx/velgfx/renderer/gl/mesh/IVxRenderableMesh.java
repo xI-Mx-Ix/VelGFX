@@ -6,6 +6,7 @@ package net.xmx.velgfx.renderer.gl.mesh;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
+
 import java.util.List;
 
 /**
@@ -29,12 +30,25 @@ public interface IVxRenderableMesh {
     /**
      * Prepares the OpenGL Vertex Array State for this mesh.
      * <p>
-     * Called by the Render Queue immediately before drawing. This typically binds the VAO.
+     * Called by the Render Queue immediately before drawing. This typically binds the VAO
+     * and ensures the correct Element Buffer Object (EBO) is bound.
      */
     void setupVaoState();
 
     /**
-     * Calculates the absolute vertex start index for a specific command.
+     * Resolves a relative draw command into an absolute draw command used for rendering.
+     * <p>
+     * Since meshes are often packed into larger Arena Buffers, the command stored within the mesh
+     * usually contains offsets relative to the mesh's start. This method calculates the absolute
+     * byte offsets and base vertex indices required by OpenGL to locate the data in the global buffer.
+     *
+     * @param command The relative draw command.
+     * @return The absolute draw command ready for {@code glDrawElementsBaseVertex}.
+     */
+    VxDrawCommand resolveCommand(VxDrawCommand command);
+
+    /**
+     * Calculates the absolute vertex start index for a specific command (Legacy / Transform Feedback support).
      *
      * @param command The draw command relative to the mesh start.
      * @return The absolute index in the currently bound VBO.

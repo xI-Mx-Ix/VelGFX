@@ -16,24 +16,33 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * Represents a contiguous segment of geometry stored within a larger {@link VxArenaBuffer}.
+ * Represents a mesh stored within an {@link VxArenaBuffer}.
  * <p>
- * This is the primary mesh implementation for the engine. It is used for both:
- * <ul>
- *     <li><b>Static Meshes:</b> Directly rendered from the arena (Shared VAO).</li>
- *     <li><b>Skinned Source Data:</b> Read by the compute shader during the skinning pass.</li>
- * </ul>
- * <p>
- * This class handles the mapping of offsets and draw commands relative to the arena's memory block.
+ * This class holds references to its segments in both the Vertex Buffer and the Element Buffer.
+ * It is responsible for calculating the final offsets required for {@code glDrawElementsBaseVertex}
+ * by mapping local draw commands to absolute memory addresses in the Arena.
  *
  * @author xI-Mx-Ix
  */
 public class VxArenaMesh implements IVxRenderableMesh {
 
     protected final VxArenaBuffer parentBuffer;
-    protected final long offsetBytes;
-    protected final long sizeBytes;
-    protected final int baseVertex;
+
+    /**
+     * The allocated memory segment in the Vertex Buffer (VBO).
+     */
+    protected final VxMemorySegment vertexSegment;
+
+    /**
+     * The allocated memory segment in the Element Buffer (EBO).
+     */
+    protected final VxMemorySegment indexSegment;
+
+    /**
+     * The calculated base vertex offset.
+     * This is the number of vertices from the start of the VBO to the start of this mesh.
+     */
+    protected final int baseVertexOffset;
 
     protected final List<VxDrawCommand> allDrawCommands;
     protected final Map<String, List<VxDrawCommand>> groupDrawCommands;
@@ -41,22 +50,27 @@ public class VxArenaMesh implements IVxRenderableMesh {
     protected boolean isDeleted = false;
 
     /**
-     * Constructs a new Arena Mesh handle.
+     * Constructs a new Arena Mesh.
      *
-     * @param parentBuffer      The arena buffer holding the data.
-     * @param offsetBytes       The byte offset within the arena.
-     * @param sizeBytes         The size of the mesh data in bytes.
-     * @param allDrawCommands   The global list of draw commands.
-     * @param groupDrawCommands The map of group-specific commands (for rigid body animation).
+     * @param parentBuffer      The parent arena.
+     * @param vertexSegment     The allocated vertex memory.
+     * @param indexSegment      The allocated index memory.
+     * @param allDrawCommands   The draw commands with offsets relative to the mesh start.
+     * @param groupDrawCommands The group commands with offsets relative to the mesh start.
      */
-    public VxArenaMesh(VxArenaBuffer parentBuffer, long offsetBytes, long sizeBytes,
-                       List<VxDrawCommand> allDrawCommands, Map<String, List<VxDrawCommand>> groupDrawCommands) {
-        this.parentBuffer = Objects.requireNonNull(parentBuffer, "Parent buffer cannot be null");
-        this.offsetBytes = offsetBytes;
-        this.sizeBytes = sizeBytes;
+    public VxArenaMesh(VxArenaBuffer parentBuffer,
+                       VxMemorySegment vertexSegment,
+                       VxMemorySegment indexSegment,
+                       List<VxDrawCommand> allDrawCommands,
+                       Map<String, List<VxDrawCommand>> groupDrawCommands) {
 
-        // Calculate base vertex index (assuming consistent stride in the arena)
-        this.baseVertex = (int) (offsetBytes / parentBuffer.getLayout().getStride());
+        this.parentBuffer = Objects.requireNonNull(parentBuffer);
+        this.vertexSegment = vertexSegment;
+        this.indexSegment = indexSegment;
+
+        // Calculate Base Vertex: Global Vertex Byte Offset / Stride
+        // This value corresponds to the 'basevertex' parameter in glDrawElementsBaseVertex
+        this.baseVertexOffset = (int) (vertexSegment.offset / parentBuffer.getLayout().getStride());
 
         this.allDrawCommands = allDrawCommands;
         this.groupDrawCommands = groupDrawCommands != null ? groupDrawCommands : Collections.emptyMap();
@@ -120,42 +134,52 @@ public class VxArenaMesh implements IVxRenderableMesh {
         }
     }
 
-    /**
-     * Configures the Vertex Array Object (VAO) state for rendering.
-     * <p>
-     * By default, this binds the parent arena's shared VAO.
-     */
+    @Override
     public void setupVaoState() {
+        // Binds the Arena VAO which has both VBO and EBO configured correctly
         this.parentBuffer.bindVao();
     }
 
-    /**
-     * Calculates the absolute start vertex for a draw call.
-     *
-     * @param command The draw command.
-     * @return The absolute vertex index in the VBO.
-     */
+    @Override
     public int getFinalVertexOffset(VxDrawCommand command) {
-        return this.baseVertex + command.vertexOffset;
+        // Used for legacy glDrawArrays logic (e.g., skinning pass input), returns absolute vertex index
+        return this.baseVertexOffset + command.baseVertex;
     }
 
+    @Override
+    public VxDrawCommand resolveCommand(VxDrawCommand relativeCmd) {
+        // Absolute Index Offset = Mesh EBO Segment Start + Command Index Offset
+        long finalIndexOffset = this.indexSegment.offset + relativeCmd.indexOffsetBytes;
+
+        // Absolute Base Vertex = Mesh VBO Segment Start Index + Command Base Vertex Offset
+        int finalBaseVertex = this.baseVertexOffset + relativeCmd.baseVertex;
+
+        return new VxDrawCommand(relativeCmd.material, relativeCmd.indexCount, finalIndexOffset, finalBaseVertex);
+    }
+
+    @Override
     public List<VxDrawCommand> getDrawCommands() {
         return allDrawCommands;
     }
 
-    public long getOffsetBytes() {
-        return offsetBytes;
+    public VxMemorySegment getVertexSegment() {
+        return vertexSegment;
     }
 
-    public long getSizeBytes() {
-        return sizeBytes;
+    public VxMemorySegment getIndexSegment() {
+        return indexSegment;
     }
 
     /**
-     * Checks if this mesh has been deleted and its resources freed.
+     * Retrieves the index buffer associated with the parent arena.
+     * Used by SkinnedResultMesh to bind the source topology.
      *
-     * @return True if deleted, false otherwise.
+     * @return The index buffer.
      */
+    public net.xmx.velgfx.renderer.gl.VxIndexBuffer getSourceIndexBuffer() {
+        return parentBuffer.getIndexBuffer();
+    }
+
     @Override
     public boolean isDeleted() {
         return isDeleted;
@@ -167,24 +191,21 @@ public class VxArenaMesh implements IVxRenderableMesh {
      */
     protected class GroupView extends VxArenaMesh {
         public GroupView(List<VxDrawCommand> groupCommands) {
-            super(VxArenaMesh.this.parentBuffer, VxArenaMesh.this.offsetBytes,
-                    VxArenaMesh.this.sizeBytes, groupCommands, Collections.emptyMap());
+            super(VxArenaMesh.this.parentBuffer,
+                    VxArenaMesh.this.vertexSegment,
+                    VxArenaMesh.this.indexSegment,
+                    groupCommands, Collections.emptyMap());
         }
 
-        // Override to prevent double-freeing or invalid operations
         @Override
         public void delete() {
-            // No-op
+            // No-op: The GroupView is ephemeral; only the parent mesh owns the memory.
         }
 
         @Override
-        public void setupVaoState() {
-            VxArenaMesh.this.setupVaoState();
-        }
-
-        @Override
-        public int getFinalVertexOffset(VxDrawCommand command) {
-            return VxArenaMesh.this.getFinalVertexOffset(command);
+        public VxDrawCommand resolveCommand(VxDrawCommand relativeCmd) {
+            // Delegate resolution to parent to ensure correct offsets
+            return VxArenaMesh.this.resolveCommand(relativeCmd);
         }
     }
 }

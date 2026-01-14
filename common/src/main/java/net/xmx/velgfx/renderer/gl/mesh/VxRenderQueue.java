@@ -14,17 +14,14 @@ import net.minecraft.client.renderer.ShaderInstance;
 import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.VxGlState;
+import net.xmx.velgfx.renderer.gl.VxIndexBuffer;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
-import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaMesh;
 import net.xmx.velgfx.renderer.util.VxShaderDetector;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.BufferUtils;
-import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL13;
-import org.lwjgl.opengl.GL20;
-import org.lwjgl.opengl.GL30;
+import org.lwjgl.opengl.*;
 
 import java.nio.FloatBuffer;
 import java.util.Arrays;
@@ -134,6 +131,7 @@ public class VxRenderQueue {
 
     /**
      * Gets the singleton instance of the render queue.
+     *
      * @return The global VxRenderQueue instance.
      */
     public static synchronized VxRenderQueue getInstance() {
@@ -155,8 +153,8 @@ public class VxRenderQueue {
      * Queues a mesh for rendering in the current frame.
      * Copies the current state from the PoseStack into the pre-allocated SoA arrays.
      *
-     * @param mesh The mesh to render.
-     * @param poseStack The current transformation stack.
+     * @param mesh        The mesh to render.
+     * @param poseStack   The current transformation stack.
      * @param packedLight The packed light value.
      */
     public void add(IVxRenderableMesh mesh, PoseStack poseStack, int packedLight) {
@@ -268,7 +266,7 @@ public class VxRenderQueue {
 
         // 2. Iterate over queued items
         for (int i = 0; i < count; i++) {
-            IVxRenderableMesh  mesh = this.meshes[i];
+            IVxRenderableMesh mesh = this.meshes[i];
             Matrix4f modelMat = this.modelMatrices[i];
             Matrix3f normalMat = this.normalMatrices[i];
             int packedLight = this.packedLights[i];
@@ -310,8 +308,7 @@ public class VxRenderQueue {
                 RenderSystem.glUniformMatrix3(normalMatrixLocation, false, MATRIX_BUFFER_9);
             }
 
-            // Bind Mesh VAO
-            // This could be the Arena VAO (Static) or the Result VAO (Skinned Proxy)
+            // Bind Mesh VAO and restore EBO binding
             mesh.setupVaoState();
 
             // Upload Lightmap UV
@@ -319,7 +316,10 @@ public class VxRenderQueue {
             GL30.glVertexAttribI2i(AT_UV2, packedLight & 0xFFFF, packedLight >> 16);
 
             // Execute Draw Commands for this mesh
-            for (VxDrawCommand command : mesh.getDrawCommands()) {
+            for (VxDrawCommand rawCommand : mesh.getDrawCommands()) {
+                // Resolve relative offsets to absolute offsets using interface method
+                VxDrawCommand command = mesh.resolveCommand(rawCommand);
+
                 RenderSystem.setShaderTexture(0, command.material.albedoMapGlId);
 
                 if (shader.COLOR_MODULATOR != null) {
@@ -331,8 +331,14 @@ public class VxRenderQueue {
 
                 shader.apply();
 
-                // Calculate the final offset based on the mesh type (Absolute for Arena, Relative for Result)
-                GL11.glDrawArrays(GL11.GL_TRIANGLES, mesh.getFinalVertexOffset(command), command.vertexCount);
+                // Execute the draw call using Indices and Base Vertex.
+                GL32.glDrawElementsBaseVertex(
+                        GL30.GL_TRIANGLES,
+                        command.indexCount,
+                        VxIndexBuffer.GL_INDEX_TYPE,
+                        command.indexOffsetBytes,
+                        command.baseVertex
+                );
             }
 
             // Re-enable UV2 array for safety
@@ -395,7 +401,7 @@ public class VxRenderQueue {
 
         // 3. Render Loop
         for (int i = 0; i < count; i++) {
-            IVxRenderableMesh  mesh = this.meshes[i];
+            IVxRenderableMesh mesh = this.meshes[i];
             Matrix4f modelMat = this.modelMatrices[i];
             Matrix3f normalMat = this.normalMatrices[i];
             int packedLight = this.packedLights[i];
@@ -427,7 +433,10 @@ public class VxRenderQueue {
             GL30.glVertexAttribI2i(AT_UV2, packedLight & 0xFFFF, packedLight >> 16);
 
             // Process Draw Commands
-            for (VxDrawCommand command : mesh.getDrawCommands()) {
+            for (VxDrawCommand rawCommand : mesh.getDrawCommands()) {
+                // Resolve absolute offsets using interface method
+                VxDrawCommand command = mesh.resolveCommand(rawCommand);
+
                 VxMaterial material = command.material;
 
                 if (shader.COLOR_MODULATOR != null) {
@@ -455,8 +464,14 @@ public class VxRenderQueue {
                 // Reset Active Texture to 0 to ensure subsequent operations affect the primary unit
                 RenderSystem.activeTexture(GL13.GL_TEXTURE0);
 
-                // Draw
-                GL11.glDrawArrays(GL11.GL_TRIANGLES, mesh.getFinalVertexOffset(command), command.vertexCount);
+                // Draw Elements with Base Vertex
+                GL32.glDrawElementsBaseVertex(
+                        GL30.GL_TRIANGLES,
+                        command.indexCount,
+                        VxIndexBuffer.GL_INDEX_TYPE,
+                        command.indexOffsetBytes,
+                        command.baseVertex
+                );
             }
 
             // Restore State

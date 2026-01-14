@@ -6,6 +6,7 @@ package net.xmx.velgfx.renderer.gl.mesh.arena.skinning;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
+import net.xmx.velgfx.renderer.gl.VxIndexBuffer;
 import net.xmx.velgfx.renderer.gl.layout.VxSkinnedResultVertexLayout;
 import net.xmx.velgfx.renderer.gl.mesh.IVxRenderableMesh;
 import net.xmx.velgfx.renderer.gl.mesh.VxRenderQueue;
@@ -15,54 +16,53 @@ import net.xmx.velgfx.renderer.gl.mesh.arena.VxMemorySegment;
 import java.util.List;
 
 /**
- * A specialized mesh implementation that represents a specific segment within the
- * global {@link VxSkinningArena}.
+ * A proxy mesh that renders transformed vertices from the Skinning Arena
+ * using the topology (Indices) of the original static source mesh.
  * <p>
- * Unlike {@link VxArenaMesh}, this class does not
- * manage memory allocation logic itself. Instead, it acts as a lightweight proxy that:
- * <ul>
- *     <li>Binds the Arena's Shared VAO during setup.</li>
- *     <li>Calculates vertex offsets relative to the provided {@link VxMemorySegment}.</li>
- * </ul>
- * It is used to render the transformed vertices produced by the skinning compute pass.
+ * This class binds the global Skinning VAO (which points to the transformed vertices)
+ * but explicitly binds the Source Mesh's EBO to provide the triangle structure.
  *
  * @author xI-Mx-Ix
  */
 public class VxSkinnedResultMesh implements IVxRenderableMesh {
 
-    /**
-     * The allocated memory segment in the Arena defining where this mesh's data resides.
-     */
-    private final VxMemorySegment segment;
-
     private final List<VxDrawCommand> drawCommands;
 
     /**
-     * The calculated base vertex index in the global Arena VBO.
-     * Used to offset draw calls correctly.
+     * Reference to the index buffer of the source mesh.
      */
-    private final int baseVertexIndex;
+    private final VxIndexBuffer sourceIndexBuffer;
+
+    /**
+     * Reference to the index memory segment of the source mesh.
+     */
+    private final VxMemorySegment sourceIndexSegment;
+
+    /**
+     * The base vertex index in the global Skinning VBO.
+     */
+    private final int resultBaseVertex;
 
     private boolean isDeleted = false;
 
     /**
      * Constructs a result mesh proxy.
      *
-     * @param segment      The allocated segment in the {@link VxSkinningArena}.
-     * @param drawCommands The draw commands (reused from the source mesh).
+     * @param resultSegment The segment in the Skinning Arena containing the transformed vertices.
+     * @param sourceMesh    The original static mesh, used to retrieve topology (Indices/EBO).
      */
-    public VxSkinnedResultMesh(VxMemorySegment segment, List<VxDrawCommand> drawCommands) {
-        this.segment = segment;
-        this.drawCommands = drawCommands;
+    public VxSkinnedResultMesh(VxMemorySegment resultSegment, VxArenaMesh sourceMesh) {
+        this.drawCommands = sourceMesh.getDrawCommands();
 
-        // Calculate the absolute vertex start index based on the byte offset.
-        // Formula: SegmentOffset / BytesPerVertex
-        this.baseVertexIndex = (int) (segment.offset / VxSkinnedResultVertexLayout.STRIDE);
+        this.sourceIndexBuffer = sourceMesh.getSourceIndexBuffer();
+        this.sourceIndexSegment = sourceMesh.getIndexSegment();
+
+        // Calculate the absolute base vertex index in the Result VBO
+        this.resultBaseVertex = (int) (resultSegment.offset / VxSkinnedResultVertexLayout.STRIDE);
     }
 
     @Override
     public void queueRender(PoseStack poseStack, int packedLight) {
-        // Add self to the global render queue
         if (!isDeleted) {
             VxRenderQueue.getInstance().add(this, poseStack, packedLight);
         }
@@ -70,16 +70,33 @@ public class VxSkinnedResultMesh implements IVxRenderableMesh {
 
     @Override
     public void setupVaoState() {
-        // Bind the Shared VAO of the global Arena.
-        // This VAO is configured to read from the giant buffer.
+        // 1. Bind the Shared Skinning VAO.
+        // This VAO is configured with the vertex attributes of the global Skinning Arena VBO.
         VxSkinningArena.getInstance().bindVao();
+
+        // 2. Bind the specific EBO of the source model.
+        // Since we are reusing the index structure of the static model, we must bind its EBO here.
+        // This modifies the element buffer binding of the currently active VAO (the Skinning VAO).
+        sourceIndexBuffer.bind();
+    }
+
+    @Override
+    public VxDrawCommand resolveCommand(VxDrawCommand relativeCmd) {
+        // Indices: Start at Mesh's EBO offset + Command offset
+        long finalIndexOffset = this.sourceIndexSegment.offset + relativeCmd.indexOffsetBytes;
+
+        // Vertices: Start at Mesh's Result VBO offset + Command base vertex
+        // We add relativeCmd.baseVertex because if the mesh has multiple parts, the command
+        // might target a specific vertex range within the mesh.
+        int finalBaseVertex = this.resultBaseVertex + relativeCmd.baseVertex;
+
+        return new VxDrawCommand(relativeCmd.material, relativeCmd.indexCount, finalIndexOffset, finalBaseVertex);
     }
 
     @Override
     public int getFinalVertexOffset(VxDrawCommand command) {
-        // The command's offset is relative to the start of the mesh.
-        // We add the segment's base index to map it to the absolute position in the Arena VBO.
-        return this.baseVertexIndex + command.vertexOffset;
+        // Not used in the indexed rendering path, but required by interface.
+        return 0;
     }
 
     @Override

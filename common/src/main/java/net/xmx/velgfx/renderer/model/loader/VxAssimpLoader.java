@@ -96,21 +96,21 @@ public class VxAssimpLoader {
             // 3. Parse Materials
             List<VxMaterial> materials = VxAssimpMaterial.parseMaterials(scene, location);
 
-            // 4. Process Geometry (Vertices, Normals, UVs)
+            // 4. Process Geometry (Vertices, Normals, UVs, Indices)
             List<VxDrawCommand> allCommands = new ArrayList<>();
-            ByteBuffer geometryBuffer = VxAssimpGeometry.processStaticGeometry(scene, materials, allCommands);
+            VxAssimpGeometry.GeometryResult geometry = VxAssimpGeometry.processStaticGeometry(scene, materials, allCommands);
 
             // Safety Check
-            if (geometryBuffer.limit() == 0) {
+            if (geometry.vertices.limit() == 0) {
                 VelGFX.LOGGER.warn("Model '{}' loaded with 0 vertices!", location);
             } else {
-                VelGFX.LOGGER.info("Successfully loaded geometry: {} vertices.", geometryBuffer.limit() / VxStaticVertexLayout.STRIDE);
+                VelGFX.LOGGER.info("Successfully loaded geometry: {} vertices.", geometry.vertices.limit() / VxStaticVertexLayout.STRIDE);
             }
 
             // 5. Upload to GPU Arena
             VxArenaMesh arenaMesh = VxArenaManager.getInstance()
                     .getArena(VxStaticVertexLayout.getInstance())
-                    .allocate(geometryBuffer, allCommands, null);
+                    .allocate(geometry.vertices, geometry.indices, allCommands, null);
 
             // 6. Build Hierarchy and Skeleton
             VxNode rootNode = VxAssimpStructure.processNodeHierarchy(scene.mRootNode(), null);
@@ -155,12 +155,13 @@ public class VxAssimpLoader {
         try {
             // 1. Parse Materials
             List<VxMaterial> materials = VxAssimpMaterial.parseMaterials(scene, location);
-            
+
             // 2. Process Geometry & Bones
             List<VxDrawCommand> allCommands = new ArrayList<>();
             List<VxAssimpStructure.BoneDefinition> boneDefinitions = new ArrayList<>();
 
-            ByteBuffer geometryBuffer = VxAssimpGeometry.processSkinnedGeometry(scene, materials, allCommands, boneDefinitions);
+            // Capture the result containing both Vertex and Index buffers
+            VxAssimpGeometry.GeometryResult geometry = VxAssimpGeometry.processSkinnedGeometry(scene, materials, allCommands, boneDefinitions);
 
             // 3. Build Scene Hierarchy
             VxNode rootNode = VxAssimpStructure.processNodeHierarchy(scene.mRootNode(), null);
@@ -174,9 +175,10 @@ public class VxAssimpLoader {
             Map<String, VxAnimation> animations = VxAssimpAnimation.parseAnimations(scene);
 
             // 6. Upload to GPU Arena
+            // Pass both vertices and indices to the arena
             VxArenaMesh sourceMesh = VxArenaManager.getInstance()
                     .getArena(VxSkinnedVertexLayout.getInstance())
-                    .allocate(geometryBuffer, allCommands, null);
+                    .allocate(geometry.vertices, geometry.indices, allCommands, null);
 
             return new VxSkinnedModel(skeleton, sourceMesh, animations);
 

@@ -55,8 +55,8 @@ public class VxArenaManager {
      */
     public synchronized VxArenaBuffer getArena(IVxVertexLayout layout) {
         return arenas.computeIfAbsent(layout, k -> {
-            // Initial capacity set to 262,144 vertices (approx. 10-20MB depending on stride)
-            return new VxArenaBuffer(layout, 262144);
+            // Initial capacity: 262,144 vertices, ~786k indices (3 per vertex avg)
+            return new VxArenaBuffer(layout, 262144, 786432);
         });
     }
 

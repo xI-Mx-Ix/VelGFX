@@ -5,7 +5,6 @@
 package net.xmx.velgfx.renderer.model;
 
 import com.mojang.blaze3d.vertex.PoseStack;
-import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.layout.VxSkinnedResultVertexLayout;
 import net.xmx.velgfx.renderer.gl.layout.VxSkinnedVertexLayout;
 import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaMesh;
@@ -77,7 +76,7 @@ public class VxSkinnedModel extends VxModel {
 
         // 1. Calculate the required size for the result buffer
         // Input Size (Vertices) * Output Stride (48 bytes)
-        int vertexCount = (int) (sourceMesh.getSizeBytes() / VxSkinnedVertexLayout.STRIDE);
+        int vertexCount = (int) (sourceMesh.getVertexSegment().size / VxSkinnedVertexLayout.STRIDE);
         long requiredBytes = (long) vertexCount * VxSkinnedResultVertexLayout.STRIDE;
 
         // 2. Allocate memory segment in the global Skinning Arena
@@ -85,7 +84,7 @@ public class VxSkinnedModel extends VxModel {
 
         // 3. Create Render Proxy
         // The proxy acts as a view into the Arena for this specific model instance
-        this.renderProxy = new VxSkinnedResultMesh(this.resultSegment, sourceMesh.getDrawCommands());
+        this.renderProxy = new VxSkinnedResultMesh(this.resultSegment, sourceMesh);
 
         // 4. Initialize Hierarchy State
         // Immediately calculates the global transformations for the skeleton using the Bind Pose.
@@ -123,7 +122,7 @@ public class VxSkinnedModel extends VxModel {
 
     /**
      * Executes the actual compute pass on the GPU.
-     * Reads from Source Arena -> Writes to the allocated Segment in Skinning Arena.
+     * Reads from Source Arena (indexed) -> Writes to the allocated Segment in Skinning Arena (linear).
      */
     private void performSkinningPass() {
         VxSkinningArena arena = VxSkinningArena.getInstance();
@@ -135,7 +134,8 @@ public class VxSkinnedModel extends VxModel {
         // Disable rasterization because we are only processing vertices, not drawing pixels.
         GL11.glEnable(GL30.GL_RASTERIZER_DISCARD);
 
-        // 1. Bind Source Data (Bind Pose from Arena)
+        // 1. Bind Source Data (Bind Pose from Static Arena)
+        // This binds the Static VAO, which includes the Static VBO and Static EBO.
         sourceMesh.setupVaoState();
 
         // 2. Bind Output Data (Specific Segment in Giant Buffer)
@@ -143,15 +143,18 @@ public class VxSkinnedModel extends VxModel {
         arena.bindForFeedback(resultSegment);
 
         // 3. Begin Transform Feedback
-        // We use GL_POINTS to process vertices one-by-one.
+        // We use GL_POINTS to process vertices one-by-one linearly.
         GL40.glBeginTransformFeedback(GL11.GL_POINTS);
 
-        // Calculate the absolute start vertex in the Source Arena Buffer
-        int startVertex = sourceMesh.getFinalVertexOffset(new VxDrawCommand(null, 0, 0));
-        int vertexCount = (int) (sourceMesh.getSizeBytes() / VxSkinnedVertexLayout.STRIDE);
+        // Get the total number of vertices in this mesh segment
+        int totalVertexCount = (int) (sourceMesh.getVertexSegment().size / net.xmx.velgfx.renderer.gl.layout.VxSkinnedVertexLayout.STRIDE);
 
-        // Draw points to trigger the vertex shader for every vertex
-        GL11.glDrawArrays(GL11.GL_POINTS, startVertex, vertexCount);
+        // Get the absolute start vertex index in the Source VBO.
+        // We can create a dummy command at 0 to resolve the base vertex offset.
+        int firstVertex = sourceMesh.resolveCommand(new net.xmx.velgfx.renderer.gl.VxDrawCommand(null, 0, 0, 0)).baseVertex;
+
+        // Draw the vertex range linearly
+        GL11.glDrawArrays(GL11.GL_POINTS, firstVertex, totalVertexCount);
 
         // 4. End Feedback and Cleanup
         GL40.glEndTransformFeedback();
