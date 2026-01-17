@@ -6,6 +6,8 @@ package net.xmx.velgfx.renderer.model.loader;
 
 import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
+import net.xmx.velgfx.renderer.gl.state.VxBlendMode;
+import net.xmx.velgfx.renderer.gl.state.VxRenderType;
 import net.xmx.velgfx.resources.VxNativeImage;
 import net.xmx.velgfx.resources.VxResourceLocation;
 import net.xmx.velgfx.resources.VxTextureLoader;
@@ -31,10 +33,20 @@ import java.util.Map;
  * <p>
  * It also handles embedded textures (e.g. in GLB files) by extracting them directly
  * from the AIScene and uploading them to the GPU immediately.
+ * <p>
+ * <b>Update:</b> Now supports detection of Alpha Mode (Opaque, Mask, Blend) from standard
+ * material properties (e.g. glTF AI_MATKEY_GLTF_ALPHAMODE or generic Opacity).
  *
  * @author xI-Mx-Ix
  */
 public class VxAssimpMaterial {
+
+    // Assimp glTF Alpha Mode constants
+    private static final String KEY_GLTF_ALPHAMODE = "$mat.gltf.alphaMode";
+    private static final String KEY_GLTF_ALPHACUTOFF = "$mat.gltf.alphaCutoff";
+    private static final int ALPHAMODE_OPAQUE = 0; // "OPAQUE"
+    private static final int ALPHAMODE_MASK = 1;   // "MASK"
+    private static final int ALPHAMODE_BLEND = 2;  // "BLEND"
 
     /**
      * Parses all materials in the imported scene.
@@ -70,27 +82,24 @@ public class VxAssimpMaterial {
                 mat.baseColorFactor[0] = color.r();
                 mat.baseColorFactor[1] = color.g();
                 mat.baseColorFactor[2] = color.b();
-                mat.baseColorFactor[3] = 1.0f;
+                mat.baseColorFactor[3] = color.a();
             }
             color.free();
 
-            // Retrieve scalar PBR properties (Roughness, Metallic, DoubleSided)
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 FloatBuffer val = stack.mallocFloat(1);
                 IntBuffer size = stack.mallocInt(1);
+                AIString propString = AIString.malloc(stack);
 
-                // Check for explicit PBR roughness
+                // --- PBR Properties ---
                 size.put(0, 1);
                 if (Assimp.aiGetMaterialFloatArray(aiMat, Assimp.AI_MATKEY_ROUGHNESS_FACTOR, Assimp.aiTextureType_NONE, 0, val, size) == Assimp.aiReturn_SUCCESS) {
                     mat.roughnessFactor = val.get(0);
-                }
-                // Fallback to legacy shininess if roughness is missing
-                else {
+                } else {
                     size.put(0, 1);
                     if (Assimp.aiGetMaterialFloatArray(aiMat, Assimp.AI_MATKEY_SHININESS, Assimp.aiTextureType_NONE, 0, val, size) == Assimp.aiReturn_SUCCESS) {
                         float shininess = val.get(0);
                         if (shininess > 0) {
-                            // Map 0..1000 shininess to roughly 1.0..0.0 roughness
                             mat.roughnessFactor = 1.0f - (float) Math.sqrt(shininess / 1000.0f);
                         } else {
                             mat.roughnessFactor = 1.0f;
@@ -98,17 +107,73 @@ public class VxAssimpMaterial {
                     }
                 }
 
-                // Check for explicit PBR metallic factor
                 size.put(0, 1);
                 if (Assimp.aiGetMaterialFloatArray(aiMat, Assimp.AI_MATKEY_METALLIC_FACTOR, Assimp.aiTextureType_NONE, 0, val, size) == Assimp.aiReturn_SUCCESS) {
                     mat.metallicFactor = val.get(0);
                 }
 
-                // Check for double sided flag
                 IntBuffer intVal = stack.mallocInt(1);
                 size.put(0, 1);
                 if (Assimp.aiGetMaterialIntegerArray(aiMat, Assimp.AI_MATKEY_TWOSIDED, Assimp.aiTextureType_NONE, 0, intVal, size) == Assimp.aiReturn_SUCCESS) {
                     mat.doubleSided = intVal.get(0) != 0;
+                }
+
+                // --- Alpha Mode Detection ---
+                // 1. Try to read explicit glTF alpha mode
+                boolean alphaModeFound = false;
+                if (Assimp.aiGetMaterialString(aiMat, KEY_GLTF_ALPHAMODE, 0, 0, propString) == Assimp.aiReturn_SUCCESS) {
+                    String modeStr = propString.dataString();
+                    // Assimp sometimes returns strings, sometimes integers for this property depending on version/format
+                    // Checking string values if present
+                    if ("MASK".equalsIgnoreCase(modeStr)) {
+                        mat.renderType = VxRenderType.CUTOUT;
+                        mat.blendMode = VxBlendMode.OPAQUE; // Cutout uses opaque blending logic but with discard
+                        alphaModeFound = true;
+                    } else if ("BLEND".equalsIgnoreCase(modeStr)) {
+                        mat.renderType = VxRenderType.TRANSLUCENT;
+                        mat.blendMode = VxBlendMode.ALPHA;
+                        alphaModeFound = true;
+                    }
+                }
+
+                // 2. Try to read integer alpha mode (common in Assimp 5+)
+                if (!alphaModeFound) {
+                    size.put(0, 1);
+                    if (Assimp.aiGetMaterialIntegerArray(aiMat, KEY_GLTF_ALPHAMODE, 0, 0, intVal, size) == Assimp.aiReturn_SUCCESS) {
+                        int mode = intVal.get(0);
+                        if (mode == ALPHAMODE_MASK) {
+                            mat.renderType = VxRenderType.CUTOUT;
+                            mat.blendMode = VxBlendMode.OPAQUE;
+                            alphaModeFound = true;
+                        } else if (mode == ALPHAMODE_BLEND) {
+                            mat.renderType = VxRenderType.TRANSLUCENT;
+                            mat.blendMode = VxBlendMode.ALPHA;
+                            alphaModeFound = true;
+                        }
+                    }
+                }
+
+                // 3. Retrieve Alpha Cutoff if applicable
+                if (mat.renderType == VxRenderType.CUTOUT) {
+                    size.put(0, 1);
+                    if (Assimp.aiGetMaterialFloatArray(aiMat, KEY_GLTF_ALPHACUTOFF, 0, 0, val, size) == Assimp.aiReturn_SUCCESS) {
+                        mat.alphaCutoff = val.get(0);
+                    }
+                }
+
+                // 4. Fallback: Check Generic Opacity if no specific mode was set
+                if (!alphaModeFound) {
+                    size.put(0, 1);
+                    // AI_MATKEY_OPACITY
+                    if (Assimp.aiGetMaterialFloatArray(aiMat, Assimp.AI_MATKEY_OPACITY, Assimp.aiTextureType_NONE, 0, val, size) == Assimp.aiReturn_SUCCESS) {
+                        float opacity = val.get(0);
+                        if (opacity < 0.99f) {
+                            mat.renderType = VxRenderType.TRANSLUCENT;
+                            mat.blendMode = VxBlendMode.ALPHA;
+                            // Apply opacity to base color alpha
+                            mat.baseColorFactor[3] *= opacity;
+                        }
+                    }
                 }
             }
 
@@ -122,7 +187,6 @@ public class VxAssimpMaterial {
                         try {
                             int textureIndex = Integer.parseInt(rawPath.substring(1));
                             mat.albedoMapGlId = loadEmbeddedTexture(scene, textureIndex, embeddedTextureCache);
-                            // Set to null to prevent VxArenaMesh from trying to load it as a file later
                             mat.albedoMap = null;
                         } catch (NumberFormatException e) {
                             VelGFX.LOGGER.error("Failed to parse embedded texture index: " + rawPath);
@@ -192,7 +256,6 @@ public class VxAssimpMaterial {
             }
         } else {
             // Uncompressed ARGB8888 data (Rare in GLB/GLTF, but standard for some formats)
-            // Implementation for uncompressed embedded textures omitted for now.
             VelGFX.LOGGER.warn("Uncompressed embedded textures are not yet implemented for index {}", textureIndex);
         }
 

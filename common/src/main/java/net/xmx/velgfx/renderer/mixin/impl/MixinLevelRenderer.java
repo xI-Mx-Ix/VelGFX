@@ -11,6 +11,7 @@ import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LightTexture;
 import net.xmx.velgfx.renderer.gl.mesh.VxRenderQueue;
 import org.joml.Matrix4f;
+import org.joml.Vector3f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -18,9 +19,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
  * Mixin into LevelRenderer to manage the entire lifecycle of the custom rendering system.
- * <p>>
+ * <p>
  * 1. HEAD: Resets the queue and prepares buffers.
- * 2. AFTER_ENTITIES: Flushes the queue to draw meshes into the G-Buffers/World.
+ * 2. AFTER_ENTITIES: Flushes the OPAQUE and CUTOUT queues into the G-Buffers.
+ * 3. AFTER_TRANSLUCENT: Flushes the TRANSLUCENT queue sorted back-to-front.
+ *
  * @author xI-Mx-Ix
  */
 @Mixin(value = LevelRenderer.class, priority = 1500)
@@ -31,28 +34,44 @@ public class MixinLevelRenderer {
      */
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void velgfx_onRenderLevel_Head(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix, Matrix4f projectionMatrix, CallbackInfo ci) {
-        // Reset the batch queue for the new frame so it's empty before we start adding meshes.
         VxRenderQueue.getInstance().reset();
     }
 
     /**
-     * Injects immediately after the vanilla entity batches are finished.
+     * Injects immediately after the vanilla entity batches (Solid/Cutout) are finished.
      * <p>
-     * This is CRITICAL for Shaderpacks:
-     * - It ensures meshes are drawn into the G-Buffers (Geometry Buffers).
-     * - It ensures correct Depth Testing against the world.
-     * - It ensures meshes are drawn before Translucent objects (water/glass).
+     * Renders Opaque and Cutout geometry. This ensures depth is written correctly for
+     * subsequent transparent objects and G-Buffer generation in shaderpacks.
      */
     @Inject(
             method = "renderLevel",
             at = @At(
                     value = "INVOKE",
                     target = "Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;endBatch(Lnet/minecraft/client/renderer/RenderType;)V",
-                    ordinal = 3, // Targets end of entitySmoothCutout
+                    ordinal = 3, // Targets end of entitySmoothCutout (after solid and cutout)
                     shift = At.Shift.AFTER
             )
     )
-    private void velgfx_onRenderLevel_AfterEntities(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix, Matrix4f projectionMatrix, CallbackInfo ci) {
-        VxRenderQueue.getInstance().flush(frustumMatrix, projectionMatrix);
+    private void velgfx_onRenderLevel_AfterEntitiesOpaque(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix, Matrix4f projectionMatrix, CallbackInfo ci) {
+        VxRenderQueue.getInstance().flushOpaque(frustumMatrix, projectionMatrix);
+    }
+
+    /**
+     * Injects after the vanilla Translucent pass is finished.
+     * <p>
+     * Renders Translucent geometry, sorted back-to-front.
+     */
+    @Inject(
+            method = "renderLevel",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;endBatch(Lnet/minecraft/client/renderer/RenderType;)V",
+                    ordinal = 4, // Targets end of translucent (water, stained glass, etc.)
+                    shift = At.Shift.AFTER
+            )
+    )
+    private void velgfx_onRenderLevel_AfterTranslucent(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix, Matrix4f projectionMatrix, CallbackInfo ci) {
+        Vector3f camPos = camera.getPosition().toVector3f();
+        VxRenderQueue.getInstance().flushTranslucent(frustumMatrix, projectionMatrix, camPos);
     }
 }

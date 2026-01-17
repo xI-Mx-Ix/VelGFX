@@ -5,6 +5,8 @@
 package net.xmx.velgfx.renderer.gl.material;
 
 import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.renderer.gl.state.VxBlendMode;
+import net.xmx.velgfx.renderer.gl.state.VxRenderType;
 import net.xmx.velgfx.resources.VxResourceLocation;
 import org.lwjgl.opengl.GL11;
 
@@ -39,6 +41,24 @@ public class VxMaterial {
      * Whether the material should be rendered double-sided.
      */
     public boolean doubleSided = false;
+
+    /**
+     * The blend mode used for rendering this material.
+     * Defaults to {@link VxBlendMode#OPAQUE}.
+     */
+    public VxBlendMode blendMode = VxBlendMode.OPAQUE;
+
+    /**
+     * The render type classification.
+     * Defaults to {@link VxRenderType#OPAQUE}.
+     */
+    public VxRenderType renderType = VxRenderType.OPAQUE;
+
+    /**
+     * The alpha cutoff threshold for CUTOUT rendering.
+     * Only used if renderType is {@link VxRenderType#CUTOUT}.
+     */
+    public float alphaCutoff = 0.5f;
 
     /**
      * Resource location of the normal map texture.
