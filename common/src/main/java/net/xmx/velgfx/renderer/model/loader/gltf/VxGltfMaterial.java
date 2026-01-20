@@ -38,6 +38,14 @@ public class VxGltfMaterial {
 
     /**
      * Iterates over all materials in the glTF model and converts them into VelGFX materials.
+     * <p>
+     * This method handles the logic of "baking" separate glTF textures into the consolidated
+     * Albedo and Specular maps required by the LabPBR standard. Specifically, Ambient Occlusion
+     * and Emissive Color are merged directly into the Albedo texture, while Metallic, Roughness,
+     * and Emissive Strength are packed into the Specular texture.
+     * <p>
+     * As a result, the source images for occlusion and emission are discarded immediately after
+     * processing and are not stored in the final {@link VxMaterial} instance.
      *
      * @param model The source glTF model.
      * @return A list of populated and GPU-uploaded VelGFX materials.
@@ -58,7 +66,7 @@ public class VxGltfMaterial {
             if (matModel instanceof MaterialModelV2 materialV2) {
                 // --- 1. Load Raw Images (Off-Heap) ---
                 // We load the data into RAM first using try-with-resources.
-                // This ensures the native memory is freed immediately after upload.
+                // This ensures the native memory is freed immediately after upload to GPU.
                 try (
                         VxNativeImage albedoImg = loadTextureImage(materialV2.getBaseColorTexture());
                         VxNativeImage mrImg = loadTextureImage(materialV2.getMetallicRoughnessTexture());
@@ -77,19 +85,15 @@ public class VxGltfMaterial {
                         System.arraycopy(emissiveFactor, 0, material.emissiveFactor, 0, 3);
                     }
 
-                    Float roughFactor = materialV2.getRoughnessFactor();
-                    material.roughnessFactor = roughFactor;
+                    material.roughnessFactor = materialV2.getRoughnessFactor();
+                    material.metallicFactor = materialV2.getMetallicFactor();
+                    material.occlusionStrength = materialV2.getOcclusionStrength();
 
-                    Float metalFactor = materialV2.getMetallicFactor();
-                    material.metallicFactor = metalFactor;
-
-                    Float occlusionStrength = materialV2.getOcclusionStrength();
-                    material.occlusionStrength = occlusionStrength;
-
-                    // --- 3. Generate & Upload Textures ---
+                    // --- 3. Generate & Upload Baked Textures ---
 
                     // A) Albedo Map
-                    // Combines Base Color + Baked Ambient Occlusion + Baked Emissive Color
+                    // Combines Base Color + Baked Ambient Occlusion + Baked Emissive Color.
+                    // The result is uploaded, and the source ID is stored.
                     material.albedoMapGlId = VxPBRGenerator.createAlbedoMap(
                             albedoImg,
                             occlusionImg,
@@ -98,11 +102,11 @@ public class VxGltfMaterial {
                             material.occlusionStrength,
                             material.emissiveFactor
                     );
-                    // Mark as loaded to prevent reloading from disk later
+                    // Mark the source ResourceLocation as null/processed since we generated the ID directly
                     material.albedoMap = null;
 
                     // B) Specular Map
-                    // Generates LabPBR format: Smoothness, Metallic, Emissive Strength
+                    // Generates LabPBR format: Smoothness, Metallic, Emissive Strength.
                     material.specularMapGlId = VxPBRGenerator.createSpecularMap(
                             mrImg,
                             emissiveImg,
@@ -114,18 +118,6 @@ public class VxGltfMaterial {
                     // C) Normal Map
                     if (normalImg != null) {
                         material.normalMapGlId = VxTextureLoader.uploadTexture(normalImg);
-                    } else {
-                        // Explicitly generate a 1x1 flat normal map if missing
-                        material.normalMapGlId = VxPBRGenerator.generateFlatNormalMap();
-                    }
-
-                    // D) Optional Standalone Maps
-                    // We upload these anyway for shaders that might access them directly via custom uniforms.
-                    if (emissiveImg != null) {
-                        material.emissiveMapGlId = VxTextureLoader.uploadTexture(emissiveImg);
-                    }
-                    if (occlusionImg != null) {
-                        material.occlusionMapGlId = VxTextureLoader.uploadTexture(occlusionImg);
                     }
 
                     // --- 4. Configure Render State ---
@@ -135,7 +127,6 @@ public class VxGltfMaterial {
             }
 
             // Calls ensureGenerated() to fill in any remaining gaps (fallbacks for null textures)
-            // if the previous logic skipped something or if the model was not V2.
             material.ensureGenerated();
             list.add(material);
         }

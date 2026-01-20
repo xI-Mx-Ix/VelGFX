@@ -6,6 +6,7 @@ package net.xmx.velgfx.renderer.gl.mesh.arena;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
+import net.xmx.velgfx.renderer.gl.material.VxMaterial;
 import net.xmx.velgfx.renderer.gl.mesh.IVxRenderableMesh;
 import net.xmx.velgfx.renderer.gl.mesh.VxRenderQueue;
 import net.xmx.velgfx.resources.VxTextureLoader;
@@ -84,38 +85,32 @@ public class VxArenaMesh implements IVxRenderableMesh {
      * Iterates through all materials used by the draw commands and ensures their
      * OpenGL texture IDs are valid. If a GL ID is missing but a ResourceLocation is present
      * (e.g. for manually defined materials), the texture is loaded via {@link VxTextureLoader}.
+     * <p>
+     * This method focuses only on Albedo, Normal, and Specular maps, as secondary maps
+     * like Occlusion and Emissive are assumed to be baked into these primary textures.
      */
     protected void initializeTextures() {
         for (VxDrawCommand command : this.allDrawCommands) {
-            if (command.material != null) {
+            VxMaterial mat = command.material;
+            if (mat != null) {
                 // 1. Load Albedo (Base Color)
-                if (command.material.albedoMapGlId == -1) {
-                    command.material.albedoMapGlId = VxTextureLoader.getTexture(command.material.albedoMap);
+                if (mat.albedoMapGlId == -1 && mat.albedoMap != null) {
+                    mat.albedoMapGlId = VxTextureLoader.getTexture(mat.albedoMap);
                 }
 
                 // 2. Load Normal Map
-                if (command.material.normalMapGlId == -1 && command.material.normalMap != null) {
-                    command.material.normalMapGlId = VxTextureLoader.getTexture(command.material.normalMap);
+                if (mat.normalMapGlId == -1 && mat.normalMap != null) {
+                    mat.normalMapGlId = VxTextureLoader.getTexture(mat.normalMap);
                 }
 
-                // 3. Load Specular Map (Metallic/Roughness)
-                if (command.material.specularMapGlId == -1 && command.material.specularMap != null) {
-                    command.material.specularMapGlId = VxTextureLoader.getTexture(command.material.specularMap);
+                // 3. Load Specular Map (Metallic/Roughness/LabPBR)
+                if (mat.specularMapGlId == -1 && mat.specularMap != null) {
+                    mat.specularMapGlId = VxTextureLoader.getTexture(mat.specularMap);
                 }
 
-                // 4. Load Emissive Map
-                if (command.material.emissiveMapGlId == -1 && command.material.emissiveMap != null) {
-                    command.material.emissiveMapGlId = VxTextureLoader.getTexture(command.material.emissiveMap);
-                }
-
-                // 5. Load Occlusion Map
-                if (command.material.occlusionMapGlId == -1 && command.material.occlusionMap != null) {
-                    command.material.occlusionMapGlId = VxTextureLoader.getTexture(command.material.occlusionMap);
-                }
-
-                // 6. Generate missing maps (Flat Normal / 1x1 Pixel Fallbacks)
+                // 4. Generate missing maps (Flat Normal / 1x1 Pixel Fallbacks)
                 // This ensures the shader always has something to sample from.
-                command.material.ensureGenerated();
+                mat.ensureGenerated();
             }
         }
     }

@@ -14,12 +14,15 @@ import org.lwjgl.opengl.GL11;
  * Represents a Physically Based Rendering (PBR) material definition.
  * <p>
  * This class acts as a container for all visual properties required to render a surface,
- * including scalar factors (Metallic, Roughness) and texture maps (Albedo, Normal, Emissive, etc.).
+ * including scalar factors (Metallic, Roughness) and texture maps.
  * <p>
- * To ensure maximum compatibility with the OpenGL pipeline and external Shaderpacks,
- * this class abstracts the scalar factors (like Roughness = 0.5) by generating 1x1 pixel
- * textures if an explicit texture map is not provided. This allows the shader to always
- * sample from a texture unit without needing conditional branching for uniforms.
+ * To ensure maximum compatibility with the OpenGL pipeline and external Shaderpacks (LabPBR),
+ * this class abstracts the scalar factors by generating 1x1 pixel textures if an explicit
+ * texture map is not provided. It stores optimized "baked" textures:
+ * <ul>
+ *     <li><b>Albedo:</b> Contains Base Color, baked Ambient Occlusion, and baked Emissive Color.</li>
+ *     <li><b>Specular:</b> Contains Metallic, Roughness (Smoothness), and Emissive Strength (LabPBR).</li>
+ * </ul>
  *
  * @author xI-Mx-Ix
  */
@@ -54,26 +57,15 @@ public class VxMaterial {
     /**
      * Resource location of the Specular map.
      * <p>
-     * In the standard Metallic-Roughness workflow, this texture packs data as follows:
+     * This texture packs multiple PBR data channels into one texture (LabPBR standard):
      * <ul>
-     *     <li><b>Blue Channel:</b> Metallic factor.</li>
-     *     <li><b>Green Channel:</b> Roughness factor.</li>
+     *     <li><b>Red Channel:</b> Smoothness (1.0 - Roughness).</li>
+     *     <li><b>Green Channel:</b> Metallic factor.</li>
+     *     <li><b>Blue Channel:</b> Reserved / Porosity.</li>
+     *     <li><b>Alpha Channel:</b> Emissive Strength.</li>
      * </ul>
      */
     public VxResourceLocation specularMap = null;
-
-    /**
-     * Resource location of the Emissive map (RGB color of emitted light).
-     * Defines parts of the surface that glow.
-     */
-    public VxResourceLocation emissiveMap = null;
-
-    /**
-     * Resource location of the Occlusion map (Ambient Occlusion).
-     * <p>
-     * The Red channel defines the occlusion factor (0.0 = fully occluded, 1.0 = fully lit).
-     */
-    public VxResourceLocation occlusionMap = null;
 
     // --- GL Texture IDs (Runtime) ---
 
@@ -91,16 +83,6 @@ public class VxMaterial {
      * OpenGL texture ID for Specular/Metallic-Roughness Map. -1 if not loaded.
      */
     public int specularMapGlId = -1;
-
-    /**
-     * OpenGL texture ID for Emissive Map. -1 if not loaded.
-     */
-    public int emissiveMapGlId = -1;
-
-    /**
-     * OpenGL texture ID for Occlusion Map. -1 if not loaded.
-     */
-    public int occlusionMapGlId = -1;
 
     // --- Render State ---
 
@@ -133,24 +115,23 @@ public class VxMaterial {
 
     /**
      * The emissive color factor (RGB) multiplied with the Emissive texture.
+     * Stored here for fallback generation even if the texture is missing.
      */
     public final float[] emissiveFactor = {0.0f, 0.0f, 0.0f};
 
     /**
      * The metallic factor (0.0 to 1.0).
-     * Multiplied with the Blue channel of the Specular map.
      */
     public float metallicFactor = 1.0f;
 
     /**
      * The roughness factor (0.0 to 1.0).
-     * Multiplied with the Green channel of the Specular map.
      */
     public float roughnessFactor = 1.0f;
 
     /**
      * The occlusion strength factor (0.0 to 1.0).
-     * Controls the intensity of the ambient occlusion effect applied from the Occlusion map.
+     * Controls the intensity of the ambient occlusion effect.
      */
     public float occlusionStrength = 1.0f;
 
@@ -166,9 +147,9 @@ public class VxMaterial {
     /**
      * Ensures that all required PBR textures exist on the GPU.
      * <p>
-     * If specific maps (Normal, Specular, Emissive, Occlusion) are missing from the source model,
+     * If specific maps (Normal, Specular) are missing from the source model,
      * this method delegates to {@link VxPBRGenerator} to create 1x1 pixel textures representing
-     * the scalar factors (Metallic, Roughness, Emissive Color, Occlusion Strength).
+     * the scalar factors (Metallic, Roughness).
      * <p>
      * This guarantees that the shader pipeline can always sample from valid texture units
      * without needing complex conditional logic or uniform uploads.
@@ -179,18 +160,8 @@ public class VxMaterial {
         }
 
         if (this.specularMapGlId == -1) {
-            // Encode metallic and roughness into a 1x1 pixel (Green=Roughness, Blue=Metallic)
+            // Encode metallic and roughness into a 1x1 pixel texture (LabPBR format)
             this.specularMapGlId = VxPBRGenerator.generateMetallicRoughnessMap(this.roughnessFactor, this.metallicFactor);
-        }
-
-        if (this.emissiveMapGlId == -1) {
-            // Encode the emissive RGB factor into a 1x1 pixel
-            this.emissiveMapGlId = VxPBRGenerator.generateEmissiveMap(this.emissiveFactor);
-        }
-
-        if (this.occlusionMapGlId == -1) {
-            // Encode occlusion strength into the Red channel of a 1x1 pixel
-            this.occlusionMapGlId = VxPBRGenerator.generateOcclusionMap(this.occlusionStrength);
         }
     }
 
@@ -199,6 +170,10 @@ public class VxMaterial {
      * Should be called when the material is no longer needed to prevent VRAM leaks.
      */
     public void delete() {
+        if (albedoMapGlId != -1) {
+            GL11.glDeleteTextures(albedoMapGlId);
+            albedoMapGlId = -1;
+        }
         if (normalMapGlId != -1) {
             GL11.glDeleteTextures(normalMapGlId);
             normalMapGlId = -1;
@@ -206,14 +181,6 @@ public class VxMaterial {
         if (specularMapGlId != -1) {
             GL11.glDeleteTextures(specularMapGlId);
             specularMapGlId = -1;
-        }
-        if (emissiveMapGlId != -1) {
-            GL11.glDeleteTextures(emissiveMapGlId);
-            emissiveMapGlId = -1;
-        }
-        if (occlusionMapGlId != -1) {
-            GL11.glDeleteTextures(occlusionMapGlId);
-            occlusionMapGlId = -1;
         }
     }
 }
