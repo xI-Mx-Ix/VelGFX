@@ -29,7 +29,7 @@ public class SoccerBallRenderer extends VxRigidBodyRenderer<SoccerBallRigidBody>
      * The resource location of the sphere model file.
      */
     private static final VxResourceLocation SPHERE_MODEL_LOCATION =
-            new VxResourceLocation("example_mod", "models/obj/soccer_ball.obj");
+            new VxResourceLocation("example_mod", "models/glb/soccer_ball.glb");
 
     /**
      * A cached, GPU-resident instance of the sphere model.

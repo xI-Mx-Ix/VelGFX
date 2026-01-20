@@ -1,0 +1,17 @@
+Credits / Third-Party Assets
+============================
+
+Asset: Cesium Man (cesium_man.glb)
+Author: Khronos Group (glTF Sample Models)
+Source: https://github.com/KhronosGroup/glTF-Sample-Models/tree/main/2.0/CesiumMan
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+License URL: https://creativecommons.org/licenses/by/4.0/
+Changes: None
+
+
+Asset: Soccer Ball (soccer_ball.glb)
+Author: tinmanjuggernaut
+Source: https://sketchfab.com/3d-models/soccer-ball-88590cf1e42e44bfb85ce3b6b1959648
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+License URL: https://creativecommons.org/licenses/by/4.0/
+Changes: None
