@@ -189,22 +189,6 @@ public class VxRenderQueue {
     private int texUnitSpecular = -1;
 
     /**
-     * The texture unit index offset for the Emissive Map.
-     * <p>
-     * This value is determined dynamically by querying the 'emissive' uniform from the active shader.
-     * Initialized to -1.
-     */
-    private int texUnitEmissive = -1;
-
-    /**
-     * The texture unit index offset for the Occlusion Map.
-     * <p>
-     * This value is determined dynamically by querying the 'occlusion' uniform from the active shader.
-     * Initialized to -1.
-     */
-    private int texUnitOcclusion = -1;
-
-    /**
      * Cached uniform location for the Normal Matrix (mat3).
      * Used to transform normals from Model Space to View Space correctly.
      */
@@ -614,15 +598,9 @@ public class VxRenderQueue {
             // 1. Find Uniform Locations by Name
             int locNormals = GL20.glGetUniformLocation(currentProgramId, "normals");
             int locSpecular = GL20.glGetUniformLocation(currentProgramId, "specular");
-            int locEmissive = GL20.glGetUniformLocation(currentProgramId, "emissive");
-            int locOcclusion = GL20.glGetUniformLocation(currentProgramId, "occlusion");
 
-            // 2. Query the Integer Value (Texture Unit Index) directly from the shader
-            // If the uniform exists (location != -1), we ask OpenGL which texture unit integer is assigned to it.
             this.texUnitNormal = (locNormals != -1) ? GL20.glGetUniformi(currentProgramId, locNormals) : -1;
             this.texUnitSpecular = (locSpecular != -1) ? GL20.glGetUniformi(currentProgramId, locSpecular) : -1;
-            this.texUnitEmissive = (locEmissive != -1) ? GL20.glGetUniformi(currentProgramId, locEmissive) : -1;
-            this.texUnitOcclusion = (locOcclusion != -1) ? GL20.glGetUniformi(currentProgramId, locOcclusion) : -1;
 
             // 3. Find Normal Matrix Uniform
             this.locNormalMat = Uniform.glGetUniformLocation(currentProgramId, "iris_NormalMat");
@@ -635,12 +613,13 @@ public class VxRenderQueue {
         }
 
         if (renderTranslucent) {
-            // Translucent pass
+            // Translucent pass: Enable blending and disable depth writing
             RenderSystem.enableBlend();
             RenderSystem.depthMask(false);
 
             renderBucketShaderpack(translucentIndices, shader, viewMatrix, VxRenderType.TRANSLUCENT);
 
+            // Restore state
             RenderSystem.depthMask(true);
             RenderSystem.disableBlend();
         } else {
@@ -687,6 +666,8 @@ public class VxRenderQueue {
             if (this.locNormalMat != -1) {
                 MATRIX_BUFFER_9.clear();
                 AUX_NORMAL_VIEW.get(MATRIX_BUFFER_9);
+                // Ensure buffer is flipped for reading to prevent GL_INVALID_OPERATION
+                MATRIX_BUFFER_9.flip();
                 RenderSystem.glUniformMatrix3(this.locNormalMat, false, MATRIX_BUFFER_9);
             }
 
@@ -712,42 +693,31 @@ public class VxRenderQueue {
                     isCullingEnabled = shouldCull;
                 }
 
-                if (shader.COLOR_MODULATOR != null) shader.COLOR_MODULATOR.set(mat.baseColorFactor);
+                // Since factors are baked into textures, the modulator is set to neutral white
+                if (shader.COLOR_MODULATOR != null) shader.COLOR_MODULATOR.set(1.0f, 1.0f, 1.0f, 1.0f);
 
                 mat.blendMode.apply();
                 shader.apply();
 
                 // -- Bind Textures using Discovered Offsets --
 
-                // 0. Albedo (Base Color) -> Always Unit 0
+                // 0. Albedo (Base Color + Baked AO + Baked Emission) -> Always Unit 0
                 RenderSystem.activeTexture(GL13.GL_TEXTURE0);
                 RenderSystem.bindTexture(mat.albedoMapGlId);
 
-                // 1. Normal Map
+                // 1. Normal Map -> Targeted Unit
                 if (this.texUnitNormal != -1 && mat.normalMapGlId != -1) {
                     RenderSystem.activeTexture(GL13.GL_TEXTURE0 + this.texUnitNormal);
                     RenderSystem.bindTexture(mat.normalMapGlId);
                 }
 
-                // 2. Specular Map
+                // 2. Specular Map (Packed Smoothness, Metallic, Emission Strength) -> Targeted Unit
                 if (this.texUnitSpecular != -1 && mat.specularMapGlId != -1) {
                     RenderSystem.activeTexture(GL13.GL_TEXTURE0 + this.texUnitSpecular);
                     RenderSystem.bindTexture(mat.specularMapGlId);
                 }
 
-                // 3. Emissive Map
-                if (this.texUnitEmissive != -1 && mat.emissiveMapGlId != -1) {
-                    RenderSystem.activeTexture(GL13.GL_TEXTURE0 + this.texUnitEmissive);
-                    RenderSystem.bindTexture(mat.emissiveMapGlId);
-                }
-
-                // 4. Occlusion Map
-                if (this.texUnitOcclusion != -1 && mat.occlusionMapGlId != -1) {
-                    RenderSystem.activeTexture(GL13.GL_TEXTURE0 + this.texUnitOcclusion);
-                    RenderSystem.bindTexture(mat.occlusionMapGlId);
-                }
-
-                // Restore active texture to 0
+                // Restore active texture to 0 for vanilla compatibility
                 RenderSystem.activeTexture(GL13.GL_TEXTURE0);
 
                 // Draw Elements
