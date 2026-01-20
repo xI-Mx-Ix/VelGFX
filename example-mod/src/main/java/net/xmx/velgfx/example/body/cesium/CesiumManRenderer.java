@@ -100,8 +100,6 @@ public class CesiumManRenderer extends VxRigidBodyRenderer<CesiumManBody> {
         }
 
         poseStack.translate(0, -0.9, 0);
-        poseStack.mulPose(Axis.XP.rotationDegrees(90.0f));
-        poseStack.mulPose(Axis.YP.rotationDegrees(180));
 
         // Draw the mesh
         model.render(poseStack, packedLight);
