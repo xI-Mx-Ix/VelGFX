@@ -10,9 +10,8 @@ dependencies {
     modImplementation "dev.architectury:architectury:$rootProject.architectury_api_version"
     include(implementation(annotationProcessor("io.github.llamalad7:mixinextras-fabric:$mixinextras_version")))
 
-    implementation("org.lwjgl:lwjgl-assimp:$lwjgl_version") {
-        exclude group: "org.lwjgl", module: "lwjgl"
-    }
+    implementation 'de.javagl:jgltf-model:2.0.3'
+    implementation 'de.javagl:jgltf-impl-v2:2.0.3'
 }
 
 loom {

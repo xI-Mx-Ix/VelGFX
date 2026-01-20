@@ -93,7 +93,7 @@ public class VxNativeImage implements AutoCloseable {
                 IntBuffer h = stack.mallocInt(1);
                 IntBuffer c = stack.mallocInt(1);
 
-                // 3. Load image from memory. Force 4 channels (RGBA).
+                // Load image from memory. Force 4 channels (RGBA).
                 // STBI_rgb_alpha = 4
                 // STB allocates the result buffer using its own malloc implementation.
                 ByteBuffer imageData = STBImage.stbi_load_from_memory(sourceBuffer, w, h, c, 4);
@@ -107,6 +107,61 @@ public class VxNativeImage implements AutoCloseable {
         } finally {
             // Always free the temporary source buffer containing the raw file bytes
             MemoryUtil.memFree(sourceBuffer);
+        }
+    }
+
+    /**
+     * Reads an image directly from a ByteBuffer containing the raw file data (PNG/JPG bytes).
+     * <p>
+     * This is used for embedded textures in GLB files. It automatically handles the conversion
+     * of Java Heap buffers (byte arrays) to Direct Native buffers if required by LWJGL.
+     *
+     * @param buffer The buffer containing the encoded image file data.
+     * @return A new VxNativeImage instance.
+     * @throws IOException If decoding fails.
+     */
+    public static VxNativeImage read(ByteBuffer buffer) throws IOException {
+        ByteBuffer directBuffer = buffer;
+        boolean isTemporaryBuffer = false;
+
+        // LWJGL's STB binding requires a Direct ByteBuffer (Off-Heap).
+        // If we pass a Heap buffer to the native library, it causes an Access Violation crash.
+        if (!buffer.isDirect()) {
+            int size = buffer.remaining();
+            // Allocate temporary native memory
+            directBuffer = MemoryUtil.memAlloc(size);
+
+            // Save current position to restore later
+            int originalPos = buffer.position();
+
+            // Copy data from Java Heap to Native Memory
+            directBuffer.put(buffer);
+            directBuffer.flip();
+
+            // Restore source buffer position (good practice)
+            buffer.position(originalPos);
+
+            isTemporaryBuffer = true;
+        }
+
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            IntBuffer w = stack.mallocInt(1);
+            IntBuffer h = stack.mallocInt(1);
+            IntBuffer c = stack.mallocInt(1);
+
+            // STBI expects a direct buffer. Force 4 channels (RGBA)
+            ByteBuffer imageData = STBImage.stbi_load_from_memory(directBuffer, w, h, c, 4);
+
+            if (imageData == null) {
+                throw new IOException("Failed to load embedded image via STB: " + STBImage.stbi_failure_reason());
+            }
+
+            return new VxNativeImage(imageData, w.get(0), h.get(0), true);
+        } finally {
+            // If we allocated a temporary direct buffer for the copy, free it now to prevent leaks.
+            if (isTemporaryBuffer) {
+                MemoryUtil.memFree(directBuffer);
+            }
         }
     }
 
@@ -179,33 +234,6 @@ public class VxNativeImage implements AutoCloseable {
 
         buffer.flip();
         return buffer;
-    }
-
-    /**
-     * Reads an image directly from a ByteBuffer containing the raw file data (PNG/JPG bytes).
-     * <p>
-     * This is used for embedded textures in GLB files.
-     *
-     * @param buffer The buffer containing the encoded image file data.
-     * @return A new VxNativeImage instance.
-     * @throws IOException If decoding fails.
-     */
-    public static VxNativeImage read(ByteBuffer buffer) throws IOException {
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            IntBuffer w = stack.mallocInt(1);
-            IntBuffer h = stack.mallocInt(1);
-            IntBuffer c = stack.mallocInt(1);
-
-            // STBI expects a direct buffer. Ensure we are reading from the current position.
-            // Force 4 channels (RGBA)
-            ByteBuffer imageData = STBImage.stbi_load_from_memory(buffer, w, h, c, 4);
-
-            if (imageData == null) {
-                throw new IOException("Failed to load embedded image via STB: " + STBImage.stbi_failure_reason());
-            }
-
-            return new VxNativeImage(imageData, w.get(0), h.get(0), true);
-        }
     }
 
     /**

@@ -6,7 +6,7 @@ package net.xmx.velgfx.renderer.model;
 
 import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.shader.VxSkinningShader;
-import net.xmx.velgfx.renderer.model.loader.VxAssimpLoader;
+import net.xmx.velgfx.renderer.model.loader.gltf.VxGltfLoader;
 import net.xmx.velgfx.resources.VxResourceLocation;
 import net.xmx.velgfx.resources.VxTextureLoader;
 
@@ -18,7 +18,7 @@ import java.util.Optional;
  * Central manager for loading and caching 3D models.
  * <p>
  * This class acts as a high-level factory for {@link VxStaticModel} and {@link VxSkinnedModel}.
- * It delegates the file parsing to {@link VxAssimpLoader} and manages the lifecycle of
+ * It delegates the file parsing to {@link VxGltfLoader} and manages the lifecycle of
  * shared GPU resources.
  * <p>
  * <b>Supported Formats:</b> .obj, .fbx, .gltf, .glb, .dae (Collada), and others supported by Assimp.
@@ -57,7 +57,7 @@ public final class VxModelManager {
 
         try {
             // Pass the location directly to the loader to support JAR loading
-            VxStaticModel model = VxAssimpLoader.loadStatic(location);
+            VxStaticModel model = VxGltfLoader.loadStatic(location);
             STATIC_CACHE.put(location, model);
             return Optional.of(model);
         } catch (Exception e) {
@@ -84,7 +84,7 @@ public final class VxModelManager {
 
         try {
             // Pass the location directly to the loader
-            VxSkinnedModel model = VxAssimpLoader.loadSkinned(location);
+            VxSkinnedModel model = VxGltfLoader.loadSkinned(location);
             SKINNED_CACHE.put(location, model);
             return Optional.of(model);
         } catch (Exception e) {
