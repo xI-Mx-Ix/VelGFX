@@ -4,17 +4,28 @@
  */
 package net.xmx.velgfx.renderer.gl.material;
 
+import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.resources.VxNativeImage;
+import net.xmx.velgfx.resources.VxTextureLoader;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.system.MemoryStack;
 
 import java.nio.ByteBuffer;
 
 /**
- * A utility class responsible for generating procedural PBR textures on the GPU.
+ * A utility class responsible for generating procedural PBR textures directly on the GPU.
  * <p>
- * This class handles the creation of default 1x1 textures for missing normal maps
- * and the generation of LabPBR 1.3 compliant specular maps based on scalar
- * material properties (roughness, metallic).
+ * This class ensures that every material has a complete set of textures by creating
+ * 1x1 pixel representations for scalar values.
+ * <p>
+ * <b>Important for Minecraft Shaders:</b>
+ * Standard Minecraft Shaders (OldPBR/LabPBR) expect the following channel packing for the Specular map:
+ * <ul>
+ *     <li><b>Red:</b> Smoothness (Inverse of Roughness) -> 0.0 = Rough, 1.0 = Smooth</li>
+ *     <li><b>Green:</b> Metallic -> 0.0 = Dielectric, 1.0 = Metal</li>
+ *     <li><b>Blue:</b> (Optional/Emissive) -> Kept empty here</li>
+ * </ul>
+ * This differs from the raw glTF format (Green=Roughness, Blue=Metallic), so we perform conversion here.
  *
  * @author xI-Mx-Ix
  */
@@ -23,62 +34,75 @@ public final class VxPBRGenerator {
     /**
      * Private constructor to prevent instantiation.
      */
-    private VxPBRGenerator() {}
+    private VxPBRGenerator() {
+    }
 
     /**
-     * Generates a 1x1 pixel flat normal map.
+     * Generates a 1x1 pixel "Flat" normal map.
      * <p>
-     * <b>Value:</b> RGB(128, 128, 255) -> Vector(0, 0, 1).
+     * <b>Color:</b> RGB(128, 128, 255).
+     * <br><b>Vector:</b> (0, 0, 1) in Tangent Space.
      *
      * @return The OpenGL texture ID.
      */
     public static int generateFlatNormalMap() {
-        // Flat normal: X=0, Y=0, Z=1 -> mapped to 0..255 is 128, 128, 255
         return create1x1Texture((byte) 128, (byte) 128, (byte) 255, (byte) 255);
     }
 
     /**
-     * Generates a 1x1 pixel LabPBR 1.3 compliant specular map based on scalar factors.
+     * Generates a 1x1 pixel texture representing the Metallic and Roughness factors.
      * <p>
-     * <b>Channel Mapping:</b>
-     * <ul>
-     *     <li><b>Red:</b> Perceptual Smoothness (1.0 - Roughness).</li>
-     *     <li><b>Green:</b> F0 (Reflectance). 230 for metals, 10 for dielectrics.</li>
-     *     <li><b>Blue:</b> Porosity (0).</li>
-     *     <li><b>Alpha:</b> Emission (0).</li>
-     * </ul>
+     * This method converts standard glTF PBR values into the format expected by
+     * Minecraft Shaders (Red=Smoothness, Green=Metallic).
      *
-     * @param roughness The roughness factor (0.0 = smooth, 1.0 = rough).
-     * @param metallic  The metallic factor (0.0 = dielectric, 1.0 = metal).
+     * @param roughness The roughness value (0.0 = Smooth, 1.0 = Rough).
+     * @param metallic  The metallic value (0.0 = Dielectric, 1.0 = Metal).
      * @return The OpenGL texture ID.
      */
-    public static int generateLabPBRSpecularMap(float roughness, float metallic) {
-        // 1. Red: Smoothness
+    public static int generateMetallicRoughnessMap(float roughness, float metallic) {
+        // Convert Roughness to Smoothness (Smoothness = 1.0 - Roughness)
         float smoothness = 1.0f - roughness;
+
+        // Channel Mapping for Minecraft Shaders:
+        // Red   = Smoothness
+        // Green = Metallic
+        // Blue  = 0 (Unused)
         byte r = (byte) (smoothness * 255.0f);
+        byte g = (byte) (metallic * 255.0f);
+        byte b = 0; // Keep Blue channel empty to prevent artifacts
 
-        // 2. Green: F0 (Reflectance)
-        byte g;
-        if (metallic > 0.5f) {
-            // Metal: LabPBR ID 230 (Generic Iron)
-            g = (byte) 230;
-        } else {
-            // Dielectric: ~0.04 linear -> ~10/255
-            g = (byte) 10;
-        }
-
-        // 3. Blue: Porosity (Default 0)
-        byte b = 0;
-
-        // 4. Alpha: Emission (Default 0)
-        byte a = 0;
-
-        return create1x1Texture(r, g, b, a);
+        return create1x1Texture(r, g, b, (byte) 255);
     }
 
     /**
-     * Creates a single-pixel 2D texture on the GPU with the specified RGBA values.
-     * Uses LWJGL MemoryStack for efficient off-heap buffer management.
+     * Generates a 1x1 pixel texture representing the Emissive color.
+     *
+     * @param rgb The emissive color factors (0.0 - 1.0).
+     * @return The OpenGL texture ID.
+     */
+    public static int generateEmissiveMap(float[] rgb) {
+        byte r = (byte) (rgb[0] * 255.0f);
+        byte g = (byte) (rgb[1] * 255.0f);
+        byte b = (byte) (rgb[2] * 255.0f);
+        return create1x1Texture(r, g, b, (byte) 255);
+    }
+
+    /**
+     * Generates a 1x1 pixel texture representing Ambient Occlusion strength.
+     * <p>
+     * <b>Channel Mapping:</b> Red Channel = Occlusion Strength.
+     *
+     * @param strength The occlusion strength (0.0 = fully occluded, 1.0 = no occlusion).
+     * @return The OpenGL texture ID.
+     */
+    public static int generateOcclusionMap(float strength) {
+        byte val = (byte) (strength * 255.0f);
+        // Red channel is primary for AO, but we replicate for safety
+        return create1x1Texture(val, val, val, (byte) 255);
+    }
+
+    /**
+     * Helper method to allocate and upload a 1x1 RGBA texture.
      *
      * @param r Red component (0-255).
      * @param g Green component (0-255).
@@ -90,28 +114,83 @@ public final class VxPBRGenerator {
         int textureId = GL11.glGenTextures();
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId);
 
-        // Configure texture parameters (Nearest filter is sufficient for 1x1)
+        // Nearest filtering is required for single-value lookups
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_NEAREST);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_NEAREST);
+        // Repeat wrapping
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL11.GL_REPEAT);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL11.GL_REPEAT);
 
-        // Push a new stack frame to allocate a short-lived direct buffer
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            ByteBuffer buffer = stack.malloc(4); // 4 bytes for RGBA
-            buffer.put(r);
-            buffer.put(g);
-            buffer.put(b);
-            buffer.put(a);
-            buffer.flip(); // Prepare for reading
-
-            // Upload data to the GPU
+            ByteBuffer buffer = stack.malloc(4);
+            buffer.put(r).put(g).put(b).put(a);
+            buffer.flip();
             GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA, 1, 1, 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, buffer);
         }
 
-        // Unbind texture to prevent accidental modification
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
-
         return textureId;
+    }
+
+    /**
+     * Converts and uploads a glTF Metallic-Roughness texture to the GPU.
+     * <p>
+     * <b>glTF Standard:</b>
+     * <ul>
+     *     <li>Green: Roughness</li>
+     *     <li>Blue: Metallic</li>
+     * </ul>
+     * <p>
+     * <b>Minecraft Shader Standard (LabPBR/OldPBR):</b>
+     * <ul>
+     *     <li>Red: Smoothness (Inverse Roughness)</li>
+     *     <li>Green: Metallic</li>
+     * </ul>
+     * <p>
+     * This method reads the raw image data, performs the pixel-wise conversion,
+     * and uploads the result as a standard OpenGL texture.
+     *
+     * @param imageData The raw native image data from the texture file.
+     * @return The OpenGL Texture ID, or -1 if processing failed.
+     */
+    public static int convertAndUploadMetallicRoughness(VxNativeImage imageData) {
+        if (imageData == null) {
+            return -1;
+        }
+
+        try {
+            ByteBuffer pixels = imageData.getPixelData();
+            int limit = pixels.capacity();
+
+            // Iterate over all pixels (RGBA = 4 bytes per pixel)
+            // We modify the buffer in-place before uploading.
+            for (int i = 0; i < limit; i += 4) {
+                // Read glTF values
+                // Byte is signed in Java (-128 to 127), so we mask with 0xFF to get unsigned int (0-255)
+                int roughVal = pixels.get(i + 1) & 0xFF; // Green Channel
+                byte metalVal = pixels.get(i + 2);       // Blue Channel
+
+                // Calculate Smoothness: 255 - Roughness
+                // (Roughness 0 -> Smoothness 255)
+                byte smoothness = (byte) (255 - roughVal);
+
+                // Write new Minecraft Shader PBR format
+                // Red   = Smoothness
+                // Green = Metallic
+                // Blue  = 0 (Unused/Emissive placeholder)
+                // Alpha = 255 (Full Opacity/Unused)
+                pixels.put(i, smoothness);     // R
+                pixels.put(i + 1, metalVal);   // G
+                pixels.put(i + 2, (byte) 0);   // B
+                pixels.put(i + 3, (byte) 255); // A
+            }
+
+            // Upload the modified buffer to VRAM
+            return VxTextureLoader.uploadTexture(imageData);
+
+        } catch (Exception e) {
+            VelGFX.LOGGER.error("Failed to process Metallic-Roughness texture", e);
+            return -1;
+        }
     }
 }

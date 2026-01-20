@@ -165,21 +165,50 @@ public class VxRenderQueue {
     // -- Caching --
 
     /**
-     * Tracks the last active shader program ID to detect when the shader changes (e.g., Iris activation).
+     * Tracks the last active shader program ID to detect when the shader changes (e.g. enabling a shader pack).
+     * This allows us to re-query uniform locations only when necessary.
      */
-    private int lastProgramId = -1;
+    private int cachedProgramId = -1;
+
     /**
-     * Cached texture unit for the normal map in the current shader.
+     * The texture unit index offset for the Normal Map.
+     * <p>
+     * This value is determined dynamically by querying the 'normals' uniform from the active shader.
+     * It represents the texture slot (e.g., 1 for GL_TEXTURE1) where the shader expects the normal map.
+     * Initialized to -1.
      */
-    private int cachedNormalUnit = -1;
+    private int texUnitNormal = -1;
+
     /**
-     * Cached texture unit for the specular map in the current shader.
+     * The texture unit index offset for the Specular Map (Metallic/Roughness).
+     * <p>
+     * This value is determined dynamically by querying the 'specular' uniform from the active shader.
+     * It represents the texture slot (e.g., 3 for GL_TEXTURE3) where the shader expects PBR data.
+     * Initialized to -1.
      */
-    private int cachedSpecularUnit = -1;
+    private int texUnitSpecular = -1;
+
     /**
-     * Cached uniform location ID for the normal matrix.
+     * The texture unit index offset for the Emissive Map.
+     * <p>
+     * This value is determined dynamically by querying the 'emissive' uniform from the active shader.
+     * Initialized to -1.
      */
-    private int cachedNormalMatLoc = -1;
+    private int texUnitEmissive = -1;
+
+    /**
+     * The texture unit index offset for the Occlusion Map.
+     * <p>
+     * This value is determined dynamically by querying the 'occlusion' uniform from the active shader.
+     * Initialized to -1.
+     */
+    private int texUnitOcclusion = -1;
+
+    /**
+     * Cached uniform location for the Normal Matrix (mat3).
+     * Used to transform normals from Model Space to View Space correctly.
+     */
+    private int locNormalMat = -1;
 
     /**
      * Private constructor to enforce the Singleton pattern.
@@ -551,45 +580,57 @@ public class VxRenderQueue {
     }
 
     /**
-     * Handles rendering when a Shaderpack (Iris/Optifine) is active.
-     * This path is more complex because shaderpacks are dynamic. We have to query the active
-     * program to find where it wants us to put Normal Maps and Specular Maps (PBR),
-     * as this varies between shaderpacks.
+     * Handles rendering when an external shader pack is active.
+     * <p>
+     * This method inspects the current OpenGL shader program to determine where specific
+     * textures should be bound. It looks for specific uniform names ("normals", "specular")
+     * and retrieves their integer values to determine the correct Texture Unit offset.
      *
-     * @param viewMatrix        The view matrix.
-     * @param projectionMatrix  The projection matrix.
+     * @param viewMatrix        The view matrix (World -> Camera).
+     * @param projectionMatrix  The projection matrix (Camera -> Clip).
      * @param renderTranslucent Whether this pass is for translucent objects.
      */
     private void renderBatchShaderpack(Matrix4f viewMatrix, Matrix4f projectionMatrix, boolean renderTranslucent) {
-        // Start with the basic solid shader (Iris will wrap/replace this internally)
         ShaderInstance shader = setupCommonRenderState(projectionMatrix, GameRenderer.getRendertypeEntitySolidShader());
         if (shader == null) return;
 
-        // Reset samplers
+        // Reset standard samplers (Unit 0-11)
         for (int i = 0; i < 12; ++i) {
             shader.setSampler("Sampler" + i, RenderSystem.getShaderTexture(i));
         }
         shader.apply();
+
+        // Reset base overlay color
         GL30.glVertexAttrib4f(1, 1.0f, 1.0f, 1.0f, 1.0f);
 
-        // -- Dynamic Shader Analysis --
-        // Check if the shader program ID changed since the last frame/batch.
+        // Dynamic Shader Analysis
+        // We query the shader program directly to find out which Texture Unit
+        // corresponds to the 'normals' and 'specular' uniforms.
         int currentProgramId = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
 
-        if (currentProgramId != this.lastProgramId) {
-            this.lastProgramId = currentProgramId;
+        if (currentProgramId != this.cachedProgramId) {
+            this.cachedProgramId = currentProgramId;
 
-            // Look for uniforms named "normals" and "specular" to identify texture units for PBR.
-            int normalUniformLoc = GL20.glGetUniformLocation(currentProgramId, "normals");
-            int specularUniformLoc = GL20.glGetUniformLocation(currentProgramId, "specular");
+            // 1. Find Uniform Locations by Name
+            int locNormals = GL20.glGetUniformLocation(currentProgramId, "normals");
+            int locSpecular = GL20.glGetUniformLocation(currentProgramId, "specular");
+            int locEmissive = GL20.glGetUniformLocation(currentProgramId, "emissive");
+            int locOcclusion = GL20.glGetUniformLocation(currentProgramId, "occlusion");
 
-            this.cachedNormalUnit = (normalUniformLoc != -1) ? GL20.glGetUniformi(currentProgramId, normalUniformLoc) : -1;
-            this.cachedSpecularUnit = (specularUniformLoc != -1) ? GL20.glGetUniformi(currentProgramId, specularUniformLoc) : -1;
+            // 2. Query the Integer Value (Texture Unit Index) directly from the shader
+            // If the uniform exists (location != -1), we ask OpenGL which texture unit integer is assigned to it.
+            this.texUnitNormal = (locNormals != -1) ? GL20.glGetUniformi(currentProgramId, locNormals) : -1;
+            this.texUnitSpecular = (locSpecular != -1) ? GL20.glGetUniformi(currentProgramId, locSpecular) : -1;
+            this.texUnitEmissive = (locEmissive != -1) ? GL20.glGetUniformi(currentProgramId, locEmissive) : -1;
+            this.texUnitOcclusion = (locOcclusion != -1) ? GL20.glGetUniformi(currentProgramId, locOcclusion) : -1;
 
-            // Find the normal matrix uniform location (names vary between packs)
-            this.cachedNormalMatLoc = Uniform.glGetUniformLocation(currentProgramId, "NormalMat");
-            if (this.cachedNormalMatLoc == -1) {
-                this.cachedNormalMatLoc = Uniform.glGetUniformLocation(currentProgramId, "normalMatrix");
+            // 3. Find Normal Matrix Uniform
+            this.locNormalMat = Uniform.glGetUniformLocation(currentProgramId, "iris_NormalMat");
+            if (this.locNormalMat == -1) {
+                this.locNormalMat = Uniform.glGetUniformLocation(currentProgramId, "NormalMat");
+            }
+            if (this.locNormalMat == -1) {
+                this.locNormalMat = Uniform.glGetUniformLocation(currentProgramId, "normalMatrix");
             }
         }
 
@@ -615,13 +656,16 @@ public class VxRenderQueue {
     }
 
     /**
-     * The inner loop for Shaderpack rendering.
-     * Supports binding Normal and Specular maps to the dynamically found texture units.
+     * The inner loop for external shader rendering.
+     * <p>
+     * Iterates over the batched meshes and binds textures using the dynamically discovered
+     * texture unit offsets. This ensures the shader reads the correct maps regardless of
+     * how the shader pack author assigned the slots.
      *
-     * @param bucket      The list of indices to render.
-     * @param shader      The active shader.
-     * @param viewMatrix  The view matrix.
-     * @param currentType The render type.
+     * @param bucket      The list of object indices to render.
+     * @param shader      The active shader instance.
+     * @param viewMatrix  The camera view matrix.
+     * @param currentType The render type we are currently processing.
      */
     private void renderBucketShaderpack(List<Integer> bucket, ShaderInstance shader, Matrix4f viewMatrix, VxRenderType currentType) {
         boolean isCullingEnabled = true;
@@ -632,23 +676,24 @@ public class VxRenderQueue {
             Matrix3f normalMat = this.normalMatrices[i];
             int packedLight = this.packedLights[i];
 
-            // Calculate matrices
+            // 1. Calculate Matrices
             AUX_MODEL_VIEW.set(viewMatrix).mul(modelMat);
             AUX_NORMAL_VIEW.set(VIEW_ROTATION).mul(normalMat);
 
-            // Upload ModelView
+            // Upload ModelView Matrix
             if (shader.MODEL_VIEW_MATRIX != null) shader.MODEL_VIEW_MATRIX.set(AUX_MODEL_VIEW);
 
-            // Upload Normal Matrix using the cached location
-            if (this.cachedNormalMatLoc != -1) {
+            // Upload Normal Matrix (if location was found)
+            if (this.locNormalMat != -1) {
                 MATRIX_BUFFER_9.clear();
                 AUX_NORMAL_VIEW.get(MATRIX_BUFFER_9);
-                RenderSystem.glUniformMatrix3(this.cachedNormalMatLoc, false, MATRIX_BUFFER_9);
+                RenderSystem.glUniformMatrix3(this.locNormalMat, false, MATRIX_BUFFER_9);
             }
 
+            // Prepare the mesh VAO
             mesh.setupVaoState();
 
-            // Set lightmap
+            // Pass the lightmap coordinates via attribute
             GL30.glDisableVertexAttribArray(AT_UV2);
             GL30.glVertexAttribI2i(AT_UV2, packedLight & 0xFFFF, packedLight >> 16);
 
@@ -656,9 +701,10 @@ public class VxRenderQueue {
                 VxDrawCommand command = mesh.resolveCommand(rawCommand);
                 VxMaterial mat = command.material;
 
+                // Skip non-matching render types
                 if (mat.renderType != currentType) continue;
 
-                // Culling Logic
+                // Handle Face Culling
                 boolean shouldCull = !mat.doubleSided;
                 if (shouldCull != isCullingEnabled) {
                     if (shouldCull) RenderSystem.enableCull();
@@ -669,31 +715,42 @@ public class VxRenderQueue {
                 if (shader.COLOR_MODULATOR != null) shader.COLOR_MODULATOR.set(mat.baseColorFactor);
 
                 mat.blendMode.apply();
-
                 shader.apply();
 
-                // -- Texture Binding --
+                // -- Bind Textures using Discovered Offsets --
 
-                // 1. Albedo (Base Color) -> Always Unit 0
+                // 0. Albedo (Base Color) -> Always Unit 0
                 RenderSystem.activeTexture(GL13.GL_TEXTURE0);
                 RenderSystem.bindTexture(mat.albedoMapGlId);
 
-                // 2. Normal Map -> Dynamic Unit (if supported by shader)
-                if (this.cachedNormalUnit != -1 && mat.normalMapGlId != -1) {
-                    RenderSystem.activeTexture(GL13.GL_TEXTURE0 + this.cachedNormalUnit);
+                // 1. Normal Map
+                if (this.texUnitNormal != -1 && mat.normalMapGlId != -1) {
+                    RenderSystem.activeTexture(GL13.GL_TEXTURE0 + this.texUnitNormal);
                     RenderSystem.bindTexture(mat.normalMapGlId);
                 }
 
-                // 3. Specular Map -> Dynamic Unit (if supported by shader)
-                if (this.cachedSpecularUnit != -1 && mat.specularMapGlId != -1) {
-                    RenderSystem.activeTexture(GL13.GL_TEXTURE0 + this.cachedSpecularUnit);
+                // 2. Specular Map
+                if (this.texUnitSpecular != -1 && mat.specularMapGlId != -1) {
+                    RenderSystem.activeTexture(GL13.GL_TEXTURE0 + this.texUnitSpecular);
                     RenderSystem.bindTexture(mat.specularMapGlId);
                 }
 
-                // Reset to default texture unit
+                // 3. Emissive Map
+                if (this.texUnitEmissive != -1 && mat.emissiveMapGlId != -1) {
+                    RenderSystem.activeTexture(GL13.GL_TEXTURE0 + this.texUnitEmissive);
+                    RenderSystem.bindTexture(mat.emissiveMapGlId);
+                }
+
+                // 4. Occlusion Map
+                if (this.texUnitOcclusion != -1 && mat.occlusionMapGlId != -1) {
+                    RenderSystem.activeTexture(GL13.GL_TEXTURE0 + this.texUnitOcclusion);
+                    RenderSystem.bindTexture(mat.occlusionMapGlId);
+                }
+
+                // Restore active texture to 0
                 RenderSystem.activeTexture(GL13.GL_TEXTURE0);
 
-                // Draw
+                // Draw Elements
                 GL32.glDrawElementsBaseVertex(
                         GL30.GL_TRIANGLES,
                         command.indexCount,
@@ -703,9 +760,11 @@ public class VxRenderQueue {
                 );
             }
 
+            // Cleanup attribute
             GL30.glEnableVertexAttribArray(AT_UV2);
         }
 
+        // Restore culling state
         if (!isCullingEnabled) {
             RenderSystem.enableCull();
         }

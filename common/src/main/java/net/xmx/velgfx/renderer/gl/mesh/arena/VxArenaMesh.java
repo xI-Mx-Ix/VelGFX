@@ -80,22 +80,41 @@ public class VxArenaMesh implements IVxRenderableMesh {
 
     /**
      * Initializes texture resources for the materials used by this mesh.
-     * Loads the normal map if defined, otherwise the material will generate a flat default later.
+     * <p>
+     * Iterates through all materials used by the draw commands and ensures their
+     * OpenGL texture IDs are valid. If a GL ID is missing but a ResourceLocation is present
+     * (e.g. for manually defined materials), the texture is loaded via {@link VxTextureLoader}.
      */
     protected void initializeTextures() {
         for (VxDrawCommand command : this.allDrawCommands) {
             if (command.material != null) {
-                // 1. Load Albedo
+                // 1. Load Albedo (Base Color)
                 if (command.material.albedoMapGlId == -1) {
                     command.material.albedoMapGlId = VxTextureLoader.getTexture(command.material.albedoMap);
                 }
 
-                // 2. Load Normal Map (if present in the model file)
-                if (command.material.normalMap != null) {
+                // 2. Load Normal Map
+                if (command.material.normalMapGlId == -1 && command.material.normalMap != null) {
                     command.material.normalMapGlId = VxTextureLoader.getTexture(command.material.normalMap);
                 }
 
-                // 3. Generate missing maps (Flat Normal / LabPBR Specular)
+                // 3. Load Specular Map (Metallic/Roughness)
+                if (command.material.specularMapGlId == -1 && command.material.specularMap != null) {
+                    command.material.specularMapGlId = VxTextureLoader.getTexture(command.material.specularMap);
+                }
+
+                // 4. Load Emissive Map
+                if (command.material.emissiveMapGlId == -1 && command.material.emissiveMap != null) {
+                    command.material.emissiveMapGlId = VxTextureLoader.getTexture(command.material.emissiveMap);
+                }
+
+                // 5. Load Occlusion Map
+                if (command.material.occlusionMapGlId == -1 && command.material.occlusionMap != null) {
+                    command.material.occlusionMapGlId = VxTextureLoader.getTexture(command.material.occlusionMap);
+                }
+
+                // 6. Generate missing maps (Flat Normal / 1x1 Pixel Fallbacks)
+                // This ensures the shader always has something to sample from.
                 command.material.ensureGenerated();
             }
         }
