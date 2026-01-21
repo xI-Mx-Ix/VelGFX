@@ -108,8 +108,5 @@ public final class VxModelManager {
 
         // Texture loader should also be cleared as models hold references to textures
         VxTextureLoader.clear();
-
-        // Release the skinning shader program
-        VxSkinningShader.destroy();
     }
 }

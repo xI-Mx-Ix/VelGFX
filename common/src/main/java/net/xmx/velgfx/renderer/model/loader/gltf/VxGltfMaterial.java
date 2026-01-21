@@ -11,7 +11,7 @@ import de.javagl.jgltf.model.TextureModel;
 import de.javagl.jgltf.model.v2.MaterialModelV2;
 import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
-import net.xmx.velgfx.renderer.gl.material.VxPBRGenerator;
+import net.xmx.velgfx.renderer.gl.material.VxTextureBaker;
 import net.xmx.velgfx.renderer.gl.state.VxBlendMode;
 import net.xmx.velgfx.renderer.gl.state.VxRenderType;
 import net.xmx.velgfx.resources.VxNativeImage;
@@ -24,37 +24,31 @@ import java.util.List;
 /**
  * A parser that converts raw glTF material definitions into the engine's internal {@link VxMaterial} format.
  * <p>
- * This class is responsible for:
- * <ul>
- *     <li>Decoding embedded texture data from the model file.</li>
- *     <li>Extracting PBR factors (Metallic, Roughness, Emissive, etc.).</li>
- *     <li>Delegating the generation of GPU-ready packed textures to {@link VxPBRGenerator}.</li>
- *     <li>Configuring the blend mode and render state based on the material definition.</li>
- * </ul>
+ * This class is responsible for loading embedded image data and delegating
+ * the PBR texture baking process to the GPU via {@link VxTextureBaker}.
  *
  * @author xI-Mx-Ix
  */
 public class VxGltfMaterial {
 
     /**
-     * Iterates over all materials in the glTF model and converts them into VelGFX materials.
+     * Parses all materials in a glTF model and converts them to VelGFX materials.
      * <p>
-     * This method handles the logic of "baking" separate glTF textures into the consolidated
-     * Albedo and Specular maps required by the LabPBR standard. Specifically, Ambient Occlusion
-     * and Emissive Color are merged directly into the Albedo texture, while Metallic, Roughness,
-     * and Emissive Strength are packed into the Specular texture.
-     * <p>
-     * As a result, the source images for occlusion and emission are discarded immediately after
-     * processing and are not stored in the final {@link VxMaterial} instance.
+     * This process includes:
+     * <ul>
+     *     <li>Decoding embedded images into native memory.</li>
+     *     <li>Extracting scalar factors (Metallic, Roughness, etc.).</li>
+     *     <li>Invoking the GPU PBR generator to bake consolidated texture maps.</li>
+     *     <li>Uploading normal maps directly.</li>
+     * </ul>
      *
      * @param model The source glTF model.
-     * @return A list of populated and GPU-uploaded VelGFX materials.
+     * @return A list of ready-to-render materials.
      */
     public static List<VxMaterial> parseMaterials(GltfModel model) {
         List<VxMaterial> list = new ArrayList<>();
 
         if (model.getMaterialModels().isEmpty()) {
-            // Provide a default material if the model has none
             list.add(new VxMaterial("Default_Material"));
             return list;
         }
@@ -64,9 +58,8 @@ public class VxGltfMaterial {
             VxMaterial material = new VxMaterial(name);
 
             if (matModel instanceof MaterialModelV2 materialV2) {
-                // --- 1. Load Raw Images (Off-Heap) ---
-                // We load the data into RAM first using try-with-resources.
-                // This ensures the native memory is freed immediately after upload to GPU.
+                // --- 1. Load Raw Images (RAM) ---
+                // Using try-with-resources ensures native memory is freed after upload
                 try (
                         VxNativeImage albedoImg = loadTextureImage(materialV2.getBaseColorTexture());
                         VxNativeImage mrImg = loadTextureImage(materialV2.getMetallicRoughnessTexture());
@@ -89,44 +82,27 @@ public class VxGltfMaterial {
                     material.metallicFactor = materialV2.getMetallicFactor();
                     material.occlusionStrength = materialV2.getOcclusionStrength();
 
-                    // --- 3. Generate & Upload Baked Textures ---
+                    // --- 3. GPU Bake Process ---
+                    // Generates Albedo (Baked) and Specular (LabPBR) textures on the GPU
+                    VxTextureBaker.bakeMaterialTextures(material, albedoImg, mrImg, occlusionImg, emissiveImg);
 
-                    // A) Albedo Map
-                    // Combines Base Color + Baked Ambient Occlusion + Baked Emissive Color.
-                    // The result is uploaded, and the source ID is stored.
-                    material.albedoMapGlId = VxPBRGenerator.createAlbedoMap(
-                            albedoImg,
-                            occlusionImg,
-                            emissiveImg,
-                            material.baseColorFactor,
-                            material.occlusionStrength,
-                            material.emissiveFactor
-                    );
-                    // Mark the source ResourceLocation as null/processed since we generated the ID directly
+                    // Mark source locations as null since we generated GL IDs directly
                     material.albedoMap = null;
+                    material.specularMap = null;
 
-                    // B) Specular Map
-                    // Generates LabPBR format: Smoothness, Metallic, Emissive Strength.
-                    material.specularMapGlId = VxPBRGenerator.createSpecularMap(
-                            mrImg,
-                            emissiveImg,
-                            material.roughnessFactor,
-                            material.metallicFactor,
-                            material.emissiveFactor
-                    );
-
-                    // C) Normal Map
+                    // --- 4. Upload Normal Map (Direct) ---
                     if (normalImg != null) {
                         material.normalMapGlId = VxTextureLoader.uploadTexture(normalImg);
                     }
 
-                    // --- 4. Configure Render State ---
+                    // --- 5. Configure Render State ---
                     material.doubleSided = materialV2.isDoubleSided();
                     configureBlendMode(material, materialV2);
                 }
             }
 
-            // Calls ensureGenerated() to fill in any remaining gaps (fallbacks for null textures)
+            // Fallback generation if baking didn't occur (e.g. no V2 model)
+            // or if specific maps (Normal) are still missing.
             material.ensureGenerated();
             list.add(material);
         }
@@ -134,7 +110,7 @@ public class VxGltfMaterial {
     }
 
     /**
-     * Maps glTF Alpha Mode to internal Engine Blend Mode.
+     * Configures the material's blend mode based on the glTF Alpha Mode.
      *
      * @param material The target material.
      * @param v2       The source glTF material definition.
@@ -156,8 +132,6 @@ public class VxGltfMaterial {
 
     /**
      * Loads the raw image data from a texture model without uploading it to the GPU.
-     * <p>
-     * This utility reads the binary data stream and decodes it using STBImage via {@link VxNativeImage}.
      *
      * @param textureModel The glTF texture model.
      * @return A native image wrapping the data, or null if loading failed.

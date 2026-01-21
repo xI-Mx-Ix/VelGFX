@@ -15,6 +15,5 @@ import net.xmx.velgfx.renderer.VelGFX;
 @Mod(VelGFX.MODID)
 public final class VxNeoForge {
     public VxNeoForge() {
-        VelGFX.onClientInit();
     }
 }

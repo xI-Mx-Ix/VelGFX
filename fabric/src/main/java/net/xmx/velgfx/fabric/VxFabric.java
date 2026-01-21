@@ -16,6 +16,5 @@ public final class VxFabric implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        VelGFX.onClientInit();
     }
 }

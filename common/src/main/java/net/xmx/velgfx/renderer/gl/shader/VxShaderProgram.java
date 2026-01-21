@@ -158,7 +158,7 @@ public abstract class VxShaderProgram implements AutoCloseable {
      * @param uniformName The name of the uniform.
      * @return The GL location ID.
      */
-    protected int getUniformLocation(String uniformName) {
+    public int getUniformLocation(String uniformName) {
         return uniformLocationCache.getOrDefault(uniformName, -1);
     }
 

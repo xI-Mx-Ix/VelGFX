@@ -5,6 +5,7 @@
 package net.xmx.velgfx.renderer.model;
 
 import com.mojang.blaze3d.vertex.PoseStack;
+import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.layout.VxSkinnedResultVertexLayout;
 import net.xmx.velgfx.renderer.gl.layout.VxSkinnedVertexLayout;
 import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaMesh;
@@ -126,7 +127,7 @@ public class VxSkinnedModel extends VxModel {
      */
     private void performSkinningPass() {
         VxSkinningArena arena = VxSkinningArena.getInstance();
-        VxSkinningShader shader = VxSkinningShader.getInstance();
+        VxSkinningShader shader = VelGFX.getShaderManager().getSkinningShader();
 
         shader.bind();
         shader.loadJointTransforms(boneMatrices);

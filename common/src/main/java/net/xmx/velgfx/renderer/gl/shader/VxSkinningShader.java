@@ -21,8 +21,6 @@ import org.lwjgl.opengl.GL30;
  */
 public class VxSkinningShader extends VxShaderProgram {
 
-    private static VxSkinningShader instance;
-
     private static final int MAX_BONES = 100;
 
     private static final VxResourceLocation VERTEX_SOURCE =
@@ -33,33 +31,8 @@ public class VxSkinningShader extends VxShaderProgram {
     /**
      * Private constructor to enforce Singleton pattern.
      */
-    private VxSkinningShader() {
+    public VxSkinningShader() {
         super(VERTEX_SOURCE, FRAGMENT_SOURCE);
-    }
-
-    /**
-     * Retrieves the global instance of the skinning shader.
-     * <p>
-     * If the instance does not exist, it is compiled and linked immediately.
-     * This method must be called from the main Render Thread.
-     *
-     * @return The singleton instance.
-     */
-    public static synchronized VxSkinningShader getInstance() {
-        if (instance == null) {
-            instance = new VxSkinningShader();
-        }
-        return instance;
-    }
-
-    /**
-     * Destroys the singleton instance and releases OpenGL resources.
-     */
-    public static synchronized void destroy() {
-        if (instance != null) {
-            instance.close();
-            instance = null;
-        }
     }
 
     /**
