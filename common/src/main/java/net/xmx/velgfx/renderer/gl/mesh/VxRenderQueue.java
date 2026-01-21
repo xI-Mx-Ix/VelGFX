@@ -485,13 +485,12 @@ public class VxRenderQueue {
             AUX_NORMAL_VIEW.set(VIEW_ROTATION).mul(normalMat);
 
             // 3. Lighting Correction:
-            // Vanilla shaders are weird. They expect the light direction vectors to be transformed
-            // into the object's local space (or a variation thereof) rather than calculating lighting
-            // in View Space. To do this, we multiply the global light vectors by the *transpose*
-            // of the Normal Matrix (effectively the inverse rotation).
+            // The vanilla shader expects light directions to be pre-transformed by the inverse
+            // of the normal matrix. We compute this by transposing the normal-view matrix
+            // and then transforming the world-space light directions through it.
             AUX_NORMAL_MAT.set(AUX_NORMAL_VIEW).transpose();
-            AUX_LIGHT0.set(VANILLA_LIGHT1).mul(AUX_NORMAL_MAT);
-            AUX_LIGHT1.set(VANILLA_LIGHT0).mul(AUX_NORMAL_MAT);
+            AUX_LIGHT0.set(VANILLA_LIGHT0).mul(AUX_NORMAL_MAT);
+            AUX_LIGHT1.set(VANILLA_LIGHT1).mul(AUX_NORMAL_MAT);
 
             // Update uniforms
             if (shader.LIGHT0_DIRECTION != null) shader.LIGHT0_DIRECTION.set(AUX_LIGHT0);
