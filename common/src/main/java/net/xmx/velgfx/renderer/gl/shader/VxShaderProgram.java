@@ -6,6 +6,7 @@ package net.xmx.velgfx.renderer.gl.shader;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.renderer.util.VxGlGarbageCollector;
 import net.xmx.velgfx.resources.VxResourceLocation;
 import net.xmx.velgfx.resources.VxShaderResourceLoader;
 import org.joml.Matrix4f;
@@ -14,6 +15,7 @@ import org.lwjgl.opengl.GL20;
 import org.lwjgl.system.MemoryStack;
 
 import java.io.IOException;
+import java.lang.ref.Cleaner;
 import java.nio.FloatBuffer;
 import java.util.HashMap;
 import java.util.Map;
@@ -32,6 +34,11 @@ public abstract class VxShaderProgram implements AutoCloseable {
     private final int programId;
     private final int vertexShaderId;
     private final int fragmentShaderId;
+
+    /**
+     * Handle to the cleaner task.
+     */
+    private final Cleaner.Cleanable cleanable;
 
     /**
      * Cache for uniform locations to avoid repeated JNI calls to glGetUniformLocation.
@@ -79,6 +86,21 @@ public abstract class VxShaderProgram implements AutoCloseable {
 
         // Hook for subclasses to register their specific uniforms
         registerUniforms();
+
+        int pId = this.programId;
+        int vId = this.vertexShaderId;
+        int fId = this.fragmentShaderId;
+
+        this.cleanable = VxGlGarbageCollector.getInstance().track(this, () -> {
+            // Safe cleanup on Render Thread
+            if (pId != 0) {
+                GL20.glDetachShader(pId, vId);
+                GL20.glDetachShader(pId, fId);
+                GL20.glDeleteShader(vId);
+                GL20.glDeleteShader(fId);
+                GL20.glDeleteProgram(pId);
+            }
+        });
     }
 
     /**
@@ -245,13 +267,8 @@ public abstract class VxShaderProgram implements AutoCloseable {
      */
     private void cleanup() {
         unbind();
-        if (programId != 0) {
-            GL20.glDetachShader(programId, vertexShaderId);
-            GL20.glDetachShader(programId, fragmentShaderId);
-            GL20.glDeleteShader(vertexShaderId);
-            GL20.glDeleteShader(fragmentShaderId);
-            GL20.glDeleteProgram(programId);
-        }
+        // Trigger GC logic manually
+        cleanable.clean();
     }
 
     @Override

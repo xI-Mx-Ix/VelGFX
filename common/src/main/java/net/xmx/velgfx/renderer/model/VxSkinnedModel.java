@@ -18,11 +18,13 @@ import net.xmx.velgfx.renderer.gl.shader.impl.VxSkinningShader;
 import net.xmx.velgfx.renderer.model.animation.VxAnimation;
 import net.xmx.velgfx.renderer.model.morph.VxMorphController;
 import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
+import net.xmx.velgfx.renderer.util.VxGlGarbageCollector;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL40;
 
+import java.lang.ref.Cleaner;
 import java.util.Map;
 
 /**
@@ -84,6 +86,11 @@ public class VxSkinnedModel extends VxModel {
     private final float[] boneMatrices = new float[100 * 16];
 
     /**
+     * Handle to the cleaner task.
+     */
+    private final Cleaner.Cleanable cleanable;
+
+    /**
      * Constructs a new Skinned Model and initializes the skeletal state.
      *
      * @param skeleton        The skeleton hierarchy containing bones and nodes.
@@ -104,6 +111,12 @@ public class VxSkinnedModel extends VxModel {
 
         // 2. Allocate memory segment in the global Skinning Arena
         this.resultSegment = VxSkinningArena.getInstance().allocate(requiredBytes);
+
+        VxMemorySegment segmentToFree = this.resultSegment;
+
+        this.cleanable = VxGlGarbageCollector.getInstance().track(this, () -> {
+            VxSkinningArena.getInstance().free(segmentToFree);
+        });
 
         // 3. Create Render Proxy
         // The proxy acts as a view into the Arena for this specific model instance
@@ -251,10 +264,9 @@ public class VxSkinnedModel extends VxModel {
      */
     @Override
     public void delete() {
-        // Return the allocated segment to the Arena pool for reuse
-        VxSkinningArena.getInstance().free(resultSegment);
+        // Return the allocated segment to the Arena pool immediately
+        cleanable.clean();
 
-        // Mark the proxy as deleted to prevent accidental rendering
         renderProxy.delete();
 
         // Call super to clean up attachments (Sockets)

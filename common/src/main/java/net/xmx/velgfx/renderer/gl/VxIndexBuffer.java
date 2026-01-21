@@ -5,9 +5,11 @@
 package net.xmx.velgfx.renderer.gl;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import net.xmx.velgfx.renderer.util.VxGlGarbageCollector;
 import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL31;
 
+import java.lang.ref.Cleaner;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 
@@ -37,6 +39,11 @@ public class VxIndexBuffer {
     private long capacityBytes;
 
     /**
+     * Handle to the cleaner task.
+     */
+    private final Cleaner.Cleanable cleanable;
+
+    /**
      * Creates a new Index Buffer.
      *
      * @param capacityBytes The initial capacity in bytes.
@@ -46,14 +53,15 @@ public class VxIndexBuffer {
         RenderSystem.assertOnRenderThread();
         this.capacityBytes = capacityBytes;
         this.dynamic = dynamic;
-        initialize();
-    }
 
-    /**
-     * Initializes the GL resources.
-     */
-    private void initialize() {
+        // Initialization logic moved to constructor to satisfy final field assignment
         this.eboId = GL15.glGenBuffers();
+
+        int idToDelete = this.eboId;
+        this.cleanable = VxGlGarbageCollector.getInstance().track(this, () -> {
+            GL15.glDeleteBuffers(idToDelete);
+        });
+
         bind();
         // Allocate memory on the GPU (Orphaning)
         GL15.glBufferData(GL15.GL_ELEMENT_ARRAY_BUFFER, capacityBytes, dynamic ? GL15.GL_DYNAMIC_DRAW : GL15.GL_STATIC_DRAW);
@@ -121,8 +129,8 @@ public class VxIndexBuffer {
      */
     public void delete() {
         RenderSystem.assertOnRenderThread();
-        if (eboId != 0) GL15.glDeleteBuffers(eboId);
-        eboId = 0;
+        this.eboId = 0;
+        cleanable.clean();
     }
 
     public long getCapacityBytes() {

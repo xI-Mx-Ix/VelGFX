@@ -6,10 +6,12 @@ package net.xmx.velgfx.renderer.gl;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.xmx.velgfx.renderer.gl.layout.VxStaticVertexLayout;
+import net.xmx.velgfx.renderer.util.VxGlGarbageCollector;
 import org.lwjgl.opengl.GL15;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL31;
 
+import java.lang.ref.Cleaner;
 import java.nio.ByteBuffer;
 
 /**
@@ -24,8 +26,12 @@ public class VxVertexBuffer {
 
     private int vaoId;
     private int vboId;
-    private final boolean dynamic;
     private long capacityBytes;
+
+    /**
+     * Handle to the cleaner task.
+     */
+    private final Cleaner.Cleanable cleanable;
 
     /**
      * Creates a new Vertex Buffer.
@@ -36,16 +42,18 @@ public class VxVertexBuffer {
     public VxVertexBuffer(long capacityBytes, boolean dynamic) {
         RenderSystem.assertOnRenderThread();
         this.capacityBytes = capacityBytes;
-        this.dynamic = dynamic;
-        initialize();
-    }
 
-    /**
-     * Initializes the GL resources.
-     */
-    private void initialize() {
+        // Initialization logic moved to constructor to satisfy final field assignment
         this.vboId = GL30.glGenBuffers();
         this.vaoId = GL30.glGenVertexArrays();
+
+        int idToDelete = this.vboId;
+        int vaoToDelete = this.vaoId;
+
+        this.cleanable = VxGlGarbageCollector.getInstance().track(this, () -> {
+            GL15.glDeleteBuffers(idToDelete);
+            GL30.glDeleteVertexArrays(vaoToDelete);
+        });
 
         bind();
         // Allocate memory
@@ -104,10 +112,10 @@ public class VxVertexBuffer {
      */
     public void delete() {
         RenderSystem.assertOnRenderThread();
-        if (vboId != 0) GL15.glDeleteBuffers(vboId);
-        if (vaoId != 0) GL30.glDeleteVertexArrays(vaoId);
-        vboId = 0;
-        vaoId = 0;
+        this.vboId = 0;
+        this.vaoId = 0;
+        // Trigger manual cleanup
+        cleanable.clean();
     }
 
     public long getCapacityBytes() {

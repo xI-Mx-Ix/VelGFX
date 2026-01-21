@@ -4,12 +4,14 @@
  */
 package net.xmx.velgfx.resources;
 
+import net.xmx.velgfx.renderer.util.VxGlGarbageCollector;
 import org.lwjgl.stb.STBImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.ref.Cleaner;
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
 import java.nio.channels.Channels;
@@ -43,6 +45,11 @@ public class VxNativeImage implements AutoCloseable {
     private boolean isClosed = false;
 
     /**
+     * Handle to the cleaner task.
+     */
+    private final Cleaner.Cleanable cleanable;
+
+    /**
      * Internal constructor. Use {@link #read(InputStream)} or {@link #create(int, int)}.
      *
      * @param pixelData      The native memory buffer.
@@ -55,6 +62,17 @@ public class VxNativeImage implements AutoCloseable {
         this.width = width;
         this.height = height;
         this.allocatedByStb = allocatedByStb;
+
+        ByteBuffer bufferToFree = this.pixelData;
+        boolean isStb = this.allocatedByStb;
+
+        this.cleanable = VxGlGarbageCollector.getInstance().track(this, () -> {
+            if (isStb) {
+                STBImage.stbi_image_free(bufferToFree);
+            } else {
+                MemoryUtil.memFree(bufferToFree);
+            }
+        });
     }
 
     /**
@@ -243,12 +261,9 @@ public class VxNativeImage implements AutoCloseable {
     @Override
     public void close() {
         if (!isClosed) {
-            if (allocatedByStb) {
-                STBImage.stbi_image_free(pixelData);
-            } else {
-                MemoryUtil.memFree(pixelData);
-            }
             isClosed = true;
+            // Trigger the cleaner immediately and unregister it
+            cleanable.clean();
         }
     }
 }

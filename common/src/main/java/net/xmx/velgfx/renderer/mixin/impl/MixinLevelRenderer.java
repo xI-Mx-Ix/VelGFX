@@ -10,6 +10,7 @@ import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LightTexture;
 import net.xmx.velgfx.renderer.gl.mesh.VxRenderQueue;
+import net.xmx.velgfx.renderer.util.VxGlGarbageCollector;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.spongepowered.asm.mixin.Mixin;
@@ -35,6 +36,9 @@ public class MixinLevelRenderer {
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void velgfx_onRenderLevel_Head(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix, Matrix4f projectionMatrix, CallbackInfo ci) {
         VxRenderQueue.getInstance().reset();
+
+        // Process OpenGL Garbage Collection
+        VxGlGarbageCollector.getInstance().processQueue();
     }
 
     /**

@@ -140,14 +140,19 @@ public class VxArenaBuffer {
     }
 
     /**
-     * Frees the memory associated with a sub-mesh in both buffers.
+     * Frees the memory segments directly.
+     * <p>
+     * This method is used by the Garbage Collector to release memory when the
+     * owning {@link VxArenaMesh} is phantom-reachable, avoiding strong references
+     * to the mesh itself.
      *
-     * @param mesh The mesh to deallocate.
+     * @param vSeg The vertex memory segment to free.
+     * @param iSeg The index memory segment to free.
      */
-    public void free(VxArenaMesh mesh) {
+    public void free(VxMemorySegment vSeg, VxMemorySegment iSeg) {
         RenderSystem.assertOnRenderThread();
-        vertexAllocator.free(mesh.getVertexSegment());
-        indexAllocator.free(mesh.getIndexSegment());
+        if (vSeg != null) vertexAllocator.free(vSeg);
+        if (iSeg != null) indexAllocator.free(iSeg);
     }
 
     /**

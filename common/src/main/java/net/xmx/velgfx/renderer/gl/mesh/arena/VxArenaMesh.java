@@ -9,8 +9,10 @@ import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
 import net.xmx.velgfx.renderer.gl.mesh.IVxRenderableMesh;
 import net.xmx.velgfx.renderer.gl.mesh.VxRenderQueue;
+import net.xmx.velgfx.renderer.util.VxGlGarbageCollector;
 import net.xmx.velgfx.resources.VxTextureLoader;
 
+import java.lang.ref.Cleaner;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +53,11 @@ public class VxArenaMesh implements IVxRenderableMesh {
     protected boolean isDeleted = false;
 
     /**
+     * Handle to the cleaner task.
+     */
+    protected final Cleaner.Cleanable cleanable;
+
+    /**
      * Constructs a new Arena Mesh.
      *
      * @param parentBuffer      The parent arena.
@@ -77,6 +84,15 @@ public class VxArenaMesh implements IVxRenderableMesh {
         this.groupDrawCommands = groupDrawCommands != null ? groupDrawCommands : Collections.emptyMap();
 
         initializeTextures();
+
+        VxArenaBuffer bufferRef = this.parentBuffer;
+        VxMemorySegment vSegRef = this.vertexSegment;
+        VxMemorySegment iSegRef = this.indexSegment;
+
+        this.cleanable = VxGlGarbageCollector.getInstance().track(this, () -> {
+            // This runs on the Render Thread when the Mesh object is dead.
+            bufferRef.free(vSegRef, iSegRef);
+        });
     }
 
     /**
@@ -143,8 +159,10 @@ public class VxArenaMesh implements IVxRenderableMesh {
     @Override
     public void delete() {
         if (!isDeleted) {
-            parentBuffer.free(this);
             isDeleted = true;
+            // Unregister from Cleaner and run the logic immediately via the queue.
+            // This prevents double-freeing because Cleanable guarantees at-most-once execution.
+            cleanable.clean();
         }
     }
 
