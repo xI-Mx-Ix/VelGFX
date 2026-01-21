@@ -116,7 +116,7 @@ public class VxSkinningArena {
         this.sharedVaoId = GL30.glGenVertexArrays();
         GL30.glBindVertexArray(sharedVaoId);
 
-        // FIX: Directly bind the VBO to ARRAY_BUFFER.
+        // Directly bind the VBO to ARRAY_BUFFER.
         // Do NOT call this.buffer.bind(), as that would bind the internal VAO of the VxVertexBuffer,
         // effectively unbinding our sharedVaoId and leaving it empty!
         GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, this.buffer.getVboId());
