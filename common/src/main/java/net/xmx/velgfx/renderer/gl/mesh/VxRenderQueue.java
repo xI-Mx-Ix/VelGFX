@@ -490,8 +490,8 @@ public class VxRenderQueue {
             // in View Space. To do this, we multiply the global light vectors by the *transpose*
             // of the Normal Matrix (effectively the inverse rotation).
             AUX_NORMAL_MAT.set(AUX_NORMAL_VIEW).transpose();
-            AUX_LIGHT0.set(VANILLA_LIGHT0).mul(AUX_NORMAL_MAT);
-            AUX_LIGHT1.set(VANILLA_LIGHT1).mul(AUX_NORMAL_MAT);
+            AUX_LIGHT0.set(VANILLA_LIGHT1).mul(AUX_NORMAL_MAT);
+            AUX_LIGHT1.set(VANILLA_LIGHT0).mul(AUX_NORMAL_MAT);
 
             // Update uniforms
             if (shader.LIGHT0_DIRECTION != null) shader.LIGHT0_DIRECTION.set(AUX_LIGHT0);
@@ -532,8 +532,7 @@ public class VxRenderQueue {
                 // Apply material blend mode
                 mat.blendMode.apply();
 
-                // Bind Albedo Texture
-                RenderSystem.setShaderTexture(0, mat.albedoMapGlId);
+                // Prepare sampler uniform
                 shader.setSampler("Sampler0", mat.albedoMapGlId);
 
                 // Apply color tint
@@ -541,7 +540,13 @@ public class VxRenderQueue {
                     shader.COLOR_MODULATOR.set(mat.baseColorFactor);
                 }
 
+                // Apply shader state
                 shader.apply();
+
+                if (mat.albedoMapGlId != -1) {
+                    GL13.glActiveTexture(GL13.GL_TEXTURE0);
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, mat.albedoMapGlId);
+                }
 
                 // Draw Elements
                 GL32.glDrawElementsBaseVertex(
@@ -702,23 +707,27 @@ public class VxRenderQueue {
                 // -- Bind Textures using Discovered Offsets --
 
                 // 0. Albedo (Base Color + Baked AO + Baked Emission) -> Always Unit 0
-                RenderSystem.activeTexture(GL13.GL_TEXTURE0);
-                RenderSystem.bindTexture(mat.albedoMapGlId);
+                GL13.glActiveTexture(GL13.GL_TEXTURE0);
+                if (mat.albedoMapGlId != -1) {
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, mat.albedoMapGlId);
+                } else {
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+                }
 
                 // 1. Normal Map -> Targeted Unit
                 if (this.texUnitNormal != -1 && mat.normalMapGlId != -1) {
-                    RenderSystem.activeTexture(GL13.GL_TEXTURE0 + this.texUnitNormal);
-                    RenderSystem.bindTexture(mat.normalMapGlId);
+                    GL13.glActiveTexture(GL13.GL_TEXTURE0 + this.texUnitNormal);
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, mat.normalMapGlId);
                 }
 
                 // 2. Specular Map (Packed Smoothness, Metallic, Emission Strength) -> Targeted Unit
                 if (this.texUnitSpecular != -1 && mat.specularMapGlId != -1) {
-                    RenderSystem.activeTexture(GL13.GL_TEXTURE0 + this.texUnitSpecular);
-                    RenderSystem.bindTexture(mat.specularMapGlId);
+                    GL13.glActiveTexture(GL13.GL_TEXTURE0 + this.texUnitSpecular);
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, mat.specularMapGlId);
                 }
 
                 // Restore active texture to 0 for vanilla compatibility
-                RenderSystem.activeTexture(GL13.GL_TEXTURE0);
+                GL13.glActiveTexture(GL13.GL_TEXTURE0);
 
                 // Draw Elements
                 GL32.glDrawElementsBaseVertex(
