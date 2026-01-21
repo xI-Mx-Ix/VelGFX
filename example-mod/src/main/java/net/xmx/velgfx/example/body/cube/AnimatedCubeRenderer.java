@@ -31,7 +31,7 @@ public class AnimatedCubeRenderer extends VxRigidBodyRenderer<AnimatedCubeBody> 
 
     // Path to the model file in the resources.
     private static final VxResourceLocation MODEL_LOCATION =
-            new VxResourceLocation("example_mod", "models/glb/Animated_morph_cube.glb");
+            new VxResourceLocation("example_mod", "models/glb/animated_morph_cube.glb");
 
     // Cache instances to maintain independent animation states per cube.
     private final Map<UUID, VxSkinnedModel> modelInstances = new HashMap<>();
