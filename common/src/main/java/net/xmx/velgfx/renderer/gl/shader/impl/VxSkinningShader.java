@@ -30,10 +30,12 @@ public class VxSkinningShader extends VxShaderProgram {
     private static final int MAX_ACTIVE_MORPHS = 8;
 
     /**
-     * Hardcoded Texture Unit for Morph TBO.
-     * Slot 0 is generally safe for Vertex Shader access.
+     * Dedicated Texture Unit for the Morph Target TBO.
+     * <p>
+     * Using Unit 14 avoids conflicts with Minecraft's standard texture units.
+     * This prevents rendering artifacts on subsequent entities.
      */
-    private static final int MORPH_TBO_UNIT = 0;
+    private static final int MORPH_TBO_UNIT = 14;
 
     private static final VxResourceLocation VERTEX_SOURCE =
             new VxResourceLocation("velgfx", "shaders/skinning.vsh");

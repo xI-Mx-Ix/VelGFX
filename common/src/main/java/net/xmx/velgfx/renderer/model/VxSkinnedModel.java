@@ -4,6 +4,7 @@
  */
 package net.xmx.velgfx.renderer.model;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
@@ -18,6 +19,7 @@ import net.xmx.velgfx.renderer.model.animation.VxAnimation;
 import net.xmx.velgfx.renderer.model.morph.VxMorphController;
 import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL40;
 
@@ -178,54 +180,49 @@ public class VxSkinnedModel extends VxModel {
         VxSkinningArena arena = VxSkinningArena.getInstance();
         VxSkinningShader shader = VelGFX.getShaderManager().getSkinningShader();
 
-        shader.bind();
-        shader.loadJointTransforms(boneMatrices);
+        try {
+            shader.bind();
+            shader.loadJointTransforms(boneMatrices);
 
-        // Disable rasterization because we are only processing vertices, not drawing pixels.
-        GL11.glEnable(GL30.GL_RASTERIZER_DISCARD);
+            // Disable rasterization because we are only processing vertices, not drawing pixels.
+            GL11.glEnable(GL30.GL_RASTERIZER_DISCARD);
 
-        // 1. Bind Source Data (Bind Pose from Static Arena)
-        // This binds the Static VAO, which includes the Static VBO and Static EBO.
-        sourceMesh.setupVaoState();
+            // 1. Bind Source Data (Bind Pose from Static Arena)
+            sourceMesh.setupVaoState();
 
-        // 2. Upload Morph State (if applicable)
-        if (morphController != null) {
-            // We need the absolute base vertex index of the source mesh in the VBO.
-            // This is required by the shader to calculate the correct offset into the Morph TBO.
-            int baseVertex = sourceMesh.resolveCommand(
+            // 2. Upload Morph State (if applicable)
+            if (morphController != null) {
+                int baseVertex = sourceMesh.resolveCommand(
+                        new VxDrawCommand(null, 0, 0, 0)
+                ).baseVertex;
+
+                morphController.applyToShader(shader, baseVertex);
+            } else {
+                shader.loadMorphState(null, null, 0, 0);
+            }
+
+            // 3. Bind Output Data (Specific Segment in Giant Buffer)
+            arena.bindForFeedback(resultSegment);
+
+            // 4. Begin Transform Feedback
+            GL40.glBeginTransformFeedback(GL11.GL_POINTS);
+
+            int totalVertexCount = (int) (sourceMesh.getVertexSegment().size / VxSkinnedVertexLayout.STRIDE);
+            int firstVertex = sourceMesh.resolveCommand(
                     new VxDrawCommand(null, 0, 0, 0)
             ).baseVertex;
 
-            morphController.applyToShader(shader, baseVertex);
-        } else {
-            // Ensure shader knows there are no active morphs
-            shader.loadMorphState(null, null, 0, 0);
+            GL11.glDrawArrays(GL11.GL_POINTS, firstVertex, totalVertexCount);
+
+            GL40.glEndTransformFeedback();
+            arena.unbindFeedback();
+
+        } finally {
+            // Restore State for the main render pass
+            GL11.glDisable(GL30.GL_RASTERIZER_DISCARD);
+            shader.unbind();
+            RenderSystem.activeTexture(GL13.GL_TEXTURE0);
         }
-
-        // 3. Bind Output Data (Specific Segment in Giant Buffer)
-        // This sets up the Global TFO to point to our specific slice of the VBO.
-        arena.bindForFeedback(resultSegment);
-
-        // 4. Begin Transform Feedback
-        // We use GL_POINTS to process vertices one-by-one linearly.
-        GL40.glBeginTransformFeedback(GL11.GL_POINTS);
-
-        // Calculate vertex count and offset
-        int totalVertexCount = (int) (sourceMesh.getVertexSegment().size / VxSkinnedVertexLayout.STRIDE);
-        int firstVertex = sourceMesh.resolveCommand(
-                new VxDrawCommand(null, 0, 0, 0)
-        ).baseVertex;
-
-        // Draw the vertex range linearly
-        GL11.glDrawArrays(GL11.GL_POINTS, firstVertex, totalVertexCount);
-
-        // 5. End Feedback and Cleanup
-        GL40.glEndTransformFeedback();
-        arena.unbindFeedback();
-
-        // Re-enable rasterization for the actual rendering pass
-        GL11.glDisable(GL30.GL_RASTERIZER_DISCARD);
-        shader.unbind();
     }
 
     /**
