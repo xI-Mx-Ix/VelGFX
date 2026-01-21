@@ -24,8 +24,8 @@ import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
 import net.xmx.velgfx.resources.VxResourceLocation;
 import org.joml.Matrix4f;
 
-import java.io.BufferedInputStream;
-import java.io.InputStream;
+import java.net.URI;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -158,29 +158,37 @@ public class VxGltfLoader {
 
     /**
      * Reads the glTF model from the Java Classpath.
+     * <p>
+     * Instead of reading a raw InputStream (which loses context), this method
+     * converts the resource to a URI. This allows the glTF reader to resolve
+     * relative references, such as external {@code .bin} files or texture images,
+     * even when packed inside a JAR.
      *
      * @param location The resource location.
-     * @return The parsed JglTF Model object.
+     * @return The parsed JglTF Model object with all buffers loaded.
      */
     private static GltfModel readModelFromClasspath(VxResourceLocation location) {
-        // Ensure the path starts with a slash to indicate absolute classpath resolution.
-        // Class.getResourceAsStream("assets/...") looks relative to the class package.
-        // Class.getResourceAsStream("/assets/...") looks at the root of the JAR.
         String path = location.getPath();
         if (!path.startsWith("/")) {
             path = "/" + path;
         }
 
-        try (InputStream stream = VxGltfLoader.class.getResourceAsStream(path)) {
-            if (stream == null) {
-                // If stream is still null, the file truly doesn't exist at that path
+        try {
+            // Get the URL of the resource (handles 'jar:file:...' or 'file:...')
+            URL url = VxGltfLoader.class.getResource(path);
+
+            if (url == null) {
                 throw new RuntimeException("Model file not found in classpath: " + path);
             }
 
+            // Convert to URI to provide a base path for relative lookups
+            URI uri = url.toURI();
             GltfModelReader reader = new GltfModelReader();
-            // "readWithoutReferences" loads the main file.
-            // GLB files have all data embedded, so this works perfectly.
-            return reader.readWithoutReferences(new BufferedInputStream(stream));
+
+            // Use 'read(URI)' instead of 'readWithoutReferences(Stream)'.
+            // This ensures external .bin files and textures are correctly loaded.
+            return reader.read(uri);
+
         } catch (Exception e) {
             VelGFX.LOGGER.error("Failed to read glTF model: " + path, e);
             throw new RuntimeException("glTF Import Error", e);
