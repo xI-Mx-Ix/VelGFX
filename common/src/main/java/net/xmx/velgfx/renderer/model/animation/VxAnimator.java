@@ -4,6 +4,7 @@
  */
 package net.xmx.velgfx.renderer.model.animation;
 
+import net.xmx.velgfx.renderer.model.morph.VxMorphController;
 import net.xmx.velgfx.renderer.model.skeleton.VxNode;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
@@ -14,18 +15,22 @@ import java.util.List;
 /**
  * Manages the playback, interpolation, and state of animations for a model hierarchy.
  * <p>
- * The Animator acts as the engine for skeletal animation. It tracks the current time,
- * interpolates between keyframes of the active {@link VxAnimation}, and updates the
- * local and global transforms of the {@link VxNode} hierarchy.
+ * The Animator acts as the central engine for skeletal and morph target animation. It tracks the current time,
+ * interpolates between keyframes of the active {@link VxAnimation}, and updates:
+ * <ul>
+ *     <li><b>Skeletal:</b> The local and global transforms of the {@link VxNode} hierarchy.</li>
+ *     <li><b>Morph:</b> The weights of the {@link VxMorphController}, including blending between animations.</li>
+ * </ul>
  * <p>
- * It provides a comprehensive API for controlling playback, including speed, looping,
- * pausing, manual time scrubbing, and smooth transitions between animations.
+ * This implementation supports smooth cross-fading (blending) between animations,
+ * including complex blending of array-based morph weights.
  *
  * @author xI-Mx-Ix
  */
 public class VxAnimator {
 
     private final VxNode rootNode;
+    private final VxMorphController morphController; // Can be null if model is static or has no morphs
 
     // --- Animation State ---
     private VxAnimation currentAnimation;
@@ -59,8 +64,7 @@ public class VxAnimator {
     private boolean isPaused = false;
 
     // --- Scratch Objects (Zero Allocation) ---
-
-    // Matrices for hierarchy calculation
+    // These objects are reused every frame to prevent Garbage Collection pressure.
     private final Matrix4f parentTransformScratch = new Matrix4f();
     private final Matrix4f localTransformScratch = new Matrix4f();
 
@@ -77,10 +81,12 @@ public class VxAnimator {
     /**
      * Constructs an animator for the given node hierarchy.
      *
-     * @param rootNode The root node of the hierarchy to animate.
+     * @param rootNode        The root node of the hierarchy to animate.
+     * @param morphController The morph controller to animate (optional, can be null).
      */
-    public VxAnimator(VxNode rootNode) {
+    public VxAnimator(VxNode rootNode, VxMorphController morphController) {
         this.rootNode = rootNode;
+        this.morphController = morphController;
     }
 
     /**
@@ -118,18 +124,15 @@ public class VxAnimator {
     }
 
     /**
-     * Advances the animation state or enforces the bind pose.
+     * Advances the animation state.
      * <p>
      * This method handles the temporal update of the node hierarchy:
      * <ul>
-     *     <li>If an animation is active, it increments the time cursor based on {@code dtSeconds}
-     *     and the {@link #playbackSpeed}.</li>
-     *     <li>If blending is active, it advances both animation cursors and updates the blend factor.</li>
-     *     <li>It then calculates the interpolated transforms (Position, Rotation, Scale) for every node
-     *     and updates the scene graph.</li>
-     *     <li>If <b>no</b> animation is active (or the animator is reset), it triggers a
-     *     hierarchical update using the static local transforms (Bind Pose) of the nodes.
-     *     This step is critical for skinned meshes to prevent geometry collapse.</li>
+     *     <li>Updates time cursors for current (and next) animations.</li>
+     *     <li>Handles looping logic and playback speed.</li>
+     *     <li>Interpolates TRS (Translate, Rotate, Scale) channels.</li>
+     *     <li>Interpolates Morph Weight channels.</li>
+     *     <li>Blends results if a cross-fade is active.</li>
      * </ul>
      *
      * @param dtSeconds The time elapsed since the last frame in <b>seconds</b>.
@@ -146,7 +149,6 @@ public class VxAnimator {
                 // Transition complete: Swap next to current
                 currentAnimation = nextAnimation;
                 currentTime = nextAnimationTime;
-
                 nextAnimation = null;
                 isBlending = false;
                 blendFactor = 0.0f;
@@ -163,25 +165,24 @@ public class VxAnimator {
             nextAnimationTime = advanceTime(nextAnimation, nextAnimationTime, dtSeconds);
         }
 
-        // 4. Calculate Transforms
+        // 4. Calculate Transforms & Apply Morphs
         if (currentAnimation != null) {
             parentTransformScratch.identity();
-            calculateBoneTransform(rootNode, parentTransformScratch);
+            processNode(rootNode, parentTransformScratch);
         } else {
             // Fallback: Update hierarchy using static Bind Pose
-            // Since vertices are stored in local space, global transforms must be calculated
-            // at least once to apply the bone offset matrices correctly.
             rootNode.updateHierarchy(null);
+
+            // Optional: Reset morphs to default/zero if no animation is playing
+            if (morphController != null) {
+                // We could iterate active morphs and set to 0,
+                // but keeping last state is often desired behavior.
+            }
         }
     }
 
     /**
-     * Helper to advance the time cursor for a specific animation, handling looping and speed.
-     *
-     * @param anim       The animation definition.
-     * @param timeCursor The current time in ticks.
-     * @param dt         Delta time in seconds.
-     * @return The new time in ticks.
+     * Helper to advance the time cursor for a specific animation.
      */
     private double advanceTime(VxAnimation anim, double timeCursor, float dt) {
         if (dt == 0) return timeCursor;
@@ -208,35 +209,34 @@ public class VxAnimator {
     }
 
     /**
-     * Recursively calculates transforms for the node tree based on the animation data.
+     * Recursively processes the node tree, calculating transforms and applying morphs.
      * <p>
-     * If blending is active, it samples both the current and next animations and
-     * linearly interpolates (or spherically interpolates for rotation) the results.
-     *
-     * @param node            The current node being processed.
-     * @param parentTransform The global transformation matrix of the parent node.
+     * This is the core interpolation loop. It visits every node, samples the animation curves,
+     * blends them if necessary, and updates the {@link VxNode} matrices and {@link VxMorphController}.
      */
-    private void calculateBoneTransform(VxNode node, Matrix4f parentTransform) {
+    private void processNode(VxNode node, Matrix4f parentTransform) {
         String nodeName = node.getName();
-
-        // 1. Retrieve the default Bind Pose (Local Transform)
-        // We use this as a base or fallback if animation channels are missing.
         Matrix4f bindPose = node.getLocalTransform();
 
-        // --- Sample Animation A (Current) ---
+        // --- Animation A (Current) ---
         VxAnimation.NodeChannel channelA = currentAnimation.getChannel(nodeName);
         if (channelA != null) {
             interpolatePosition(channelA.positions, currentTime, interpPosA);
             interpolateRotation(channelA.rotations, currentTime, interpRotA);
             interpolateScaling(channelA.scalings, currentTime, interpScaleA);
+
+            // If NOT blending, apply morphs directly here to save perf
+            if (!isBlending) {
+                applyMorphsDirectly(channelA, currentTime);
+            }
         } else {
-            // Fallback to bind pose components if channel is missing
+            // Fallback to bind pose components
             bindPose.getTranslation(interpPosA);
             bindPose.getUnnormalizedRotation(interpRotA);
             bindPose.getScale(interpScaleA);
         }
 
-        // --- Sample Animation B (Next) and Blend ---
+        // --- Animation B (Blending Target) ---
         if (isBlending && nextAnimation != null) {
             VxAnimation.NodeChannel channelB = nextAnimation.getChannel(nodeName);
             if (channelB != null) {
@@ -249,161 +249,200 @@ public class VxAnimator {
                 bindPose.getScale(interpScaleB);
             }
 
-            // Perform blending (A -> B)
+            // Linear/Spherical Interpolation for TRS
             interpPosA.lerp(interpPosB, blendFactor);
             interpRotA.slerp(interpRotB, blendFactor);
             interpScaleA.lerp(interpScaleB, blendFactor);
+
+            // Special blending logic for Morph Weights (Float Arrays)
+            blendMorphs(channelA, channelB);
         }
 
-        // --- Compose Local Matrix ---
+        // --- Compose Matrix ---
         localTransformScratch.translation(interpPosA)
                 .rotate(interpRotA)
                 .scale(interpScaleA);
 
         // Calculate Global Transform: ParentGlobal * Local
-        // We access the node's matrix directly to update it in-place
         Matrix4f globalTransform = node.getGlobalTransform();
         globalTransform.set(parentTransform).mul(localTransformScratch);
 
         // Propagate to children
         for (VxNode child : node.getChildren()) {
-            calculateBoneTransform(child, globalTransform);
+            processNode(child, globalTransform);
         }
     }
 
-    // --- Control API ---
+    /**
+     * Applies morph weights directly from a channel without blending.
+     * <p>
+     * This is an optimized path when {@code isBlending} is false.
+     *
+     * @param channel The animation channel containing weight keyframes.
+     * @param time    The current time in ticks.
+     */
+    private void applyMorphsDirectly(VxAnimation.NodeChannel channel, double time) {
+        if (channel.weights == null || channel.weights.isEmpty() || morphController == null) return;
+
+        float[] weights = interpolateWeights(channel.weights, time);
+        if (weights != null) {
+            for (int i = 0; i < weights.length; i++) {
+                morphController.setWeightByIndex(i, weights[i]);
+            }
+        }
+    }
 
     /**
-     * Sets the playback speed multiplier.
+     * Blends morph weights between two animation channels.
+     * <p>
+     * Handles cases where one channel might be missing weights (e.g., blending from a pose
+     * with no facial animation to one with facial animation).
      *
-     * @param speed The speed factor (Default: 1.0). Negative values reverse playback.
+     * @param channelA The channel from the current animation (can be null).
+     * @param channelB The channel from the next animation (can be null).
      */
+    private void blendMorphs(VxAnimation.NodeChannel channelA, VxAnimation.NodeChannel channelB) {
+        if (morphController == null) return;
+
+        // Sample both animations at their respective times
+        float[] wA = (channelA != null && channelA.weights != null && !channelA.weights.isEmpty())
+                ? interpolateWeights(channelA.weights, currentTime) : null;
+
+        float[] wB = (channelB != null && channelB.weights != null && !channelB.weights.isEmpty())
+                ? interpolateWeights(channelB.weights, nextAnimationTime) : null;
+
+        // Determine array length (usually they match, but we must handle mismatch safely)
+        int length = 0;
+        if (wA != null) length = Math.max(length, wA.length);
+        if (wB != null) length = Math.max(length, wB.length);
+
+        if (length == 0) return;
+
+        // Linear interpolation of every weight index
+        for (int i = 0; i < length; i++) {
+            float valA = (wA != null && i < wA.length) ? wA[i] : 0f;
+            float valB = (wB != null && i < wB.length) ? wB[i] : 0f;
+
+            // Lerp: A + (B - A) * t
+            float blended = valA + (valB - valA) * blendFactor;
+            morphController.setWeightByIndex(i, blended);
+        }
+    }
+
+    // --- Primitive Interpolation Helpers ---
+
+    private void interpolatePosition(List<VxAnimation.Key<Vector3f>> keys, double time, Vector3f result) {
+        if (keys.isEmpty()) return;
+        if (keys.size() == 1) { result.set(keys.get(0).value()); return; }
+
+        int idx = findKeyIndex(keys, time);
+        VxAnimation.Key<Vector3f> k0 = keys.get(idx);
+        VxAnimation.Key<Vector3f> k1 = keys.get(idx + 1);
+
+        float scale = getScaleFactor(k0.time(), k1.time(), time);
+        k0.value().lerp(k1.value(), scale, result);
+    }
+
+    private void interpolateRotation(List<VxAnimation.Key<Quaternionf>> keys, double time, Quaternionf result) {
+        if (keys.isEmpty()) return;
+        if (keys.size() == 1) { result.set(keys.get(0).value()); return; }
+
+        int idx = findKeyIndex(keys, time);
+        VxAnimation.Key<Quaternionf> k0 = keys.get(idx);
+        VxAnimation.Key<Quaternionf> k1 = keys.get(idx + 1);
+
+        float scale = getScaleFactor(k0.time(), k1.time(), time);
+        k0.value().slerp(k1.value(), scale, result);
+    }
+
+    private void interpolateScaling(List<VxAnimation.Key<Vector3f>> keys, double time, Vector3f result) {
+        if (keys.isEmpty()) return;
+        if (keys.size() == 1) { result.set(keys.get(0).value()); return; }
+
+        int idx = findKeyIndex(keys, time);
+        VxAnimation.Key<Vector3f> k0 = keys.get(idx);
+        VxAnimation.Key<Vector3f> k1 = keys.get(idx + 1);
+
+        float scale = getScaleFactor(k0.time(), k1.time(), time);
+        k0.value().lerp(k1.value(), scale, result);
+    }
+
+    /**
+     * Interpolates arrays of floats linearly.
+     * <p>
+     * Used for morph weights. Allocates a new float array for the result.
+     *
+     * @param keys The list of weight keyframes.
+     * @param time The current time in ticks.
+     * @return A new float array containing the interpolated weights.
+     */
+    private float[] interpolateWeights(List<VxAnimation.Key<float[]>> keys, double time) {
+        if (keys.size() == 1) return keys.get(0).value();
+
+        int idx = findKeyIndex(keys, time);
+        VxAnimation.Key<float[]> k0 = keys.get(idx);
+        VxAnimation.Key<float[]> k1 = keys.get(idx + 1);
+
+        float t = getScaleFactor(k0.time(), k1.time(), time);
+
+        float[] a = k0.value();
+        float[] b = k1.value();
+
+        // Arrays should ideally be same size, but we handle potential mismatch
+        int len = Math.min(a.length, b.length);
+        float[] res = new float[len];
+
+        for (int i = 0; i < len; i++) {
+            res[i] = a[i] + (b[i] - a[i]) * t;
+        }
+        return res;
+    }
+
+    private float getScaleFactor(double last, double next, double now) {
+        float diff = (float) (next - last);
+        return (diff != 0) ? (float) (now - last) / diff : 0f;
+    }
+
+    private <T> int findKeyIndex(List<VxAnimation.Key<T>> keys, double time) {
+        for (int i = 0; i < keys.size() - 1; i++) {
+            if (time < keys.get(i + 1).time()) return i;
+        }
+        return 0;
+    }
+
+    // --- Accessors ---
+
     public void setSpeed(float speed) {
         this.playbackSpeed = speed;
     }
 
-    /**
-     * Pauses or resumes the animation.
-     * <p>
-     * When paused, calling {@link #update(float)} will still recalculate matrices based on
-     * the current time, but the time cursor will not advance.
-     *
-     * @param paused True to pause, false to resume.
-     */
     public void setPaused(boolean paused) {
         this.isPaused = paused;
     }
 
-    /**
-     * Sets whether the animation should loop when it reaches the end.
-     *
-     * @param loop True to loop, false to clamp at the last frame.
-     */
     public void setLooping(boolean loop) {
         this.shouldLoop = loop;
     }
 
-    /**
-     * Manually sets the current time cursor of the animation in ticks.
-     * <p>
-     * This allows for manual scrubbing or synchronization.
-     *
-     * @param timeInTicks The time in ticks (0 to Duration).
-     */
     public void setTime(double timeInTicks) {
         if (currentAnimation != null) {
             this.currentTime = timeInTicks;
-
-            // Handle wrapping manually here to ensure state consistency immediately
             if (shouldLoop) {
                 this.currentTime %= currentAnimation.getDuration();
                 if (this.currentTime < 0) this.currentTime += currentAnimation.getDuration();
             } else {
-                if (this.currentTime > currentAnimation.getDuration())
-                    this.currentTime = currentAnimation.getDuration();
+                if (this.currentTime > currentAnimation.getDuration()) this.currentTime = currentAnimation.getDuration();
                 else if (this.currentTime < 0) this.currentTime = 0;
             }
-
-            // Force an immediate update of the matrices with delta 0
-            // This ensures visual feedback even if the game loop is paused
             update(0);
         }
     }
 
-    /**
-     * Gets the current playback time in ticks.
-     *
-     * @return The time in ticks.
-     */
     public double getCurrentTime() {
         return currentTime;
     }
 
-    /**
-     * Gets the currently playing animation.
-     *
-     * @return The active animation, or null.
-     */
     public VxAnimation getCurrentAnimation() {
         return currentAnimation;
-    }
-
-    // --- Interpolation Logic ---
-
-    private void interpolatePosition(List<VxAnimation.Key<Vector3f>> keys, double time, Vector3f result) {
-        if (keys.size() == 1) {
-            result.set(keys.get(0).value());
-            return;
-        }
-        int idx = findKeyIndex(keys, time);
-        VxAnimation.Key<Vector3f> k0 = keys.get(idx);
-        VxAnimation.Key<Vector3f> k1 = keys.get(idx + 1);
-        float scale = getScaleFactor(k0.time(), k1.time(), time);
-        k0.value().lerp(k1.value(), scale, result); // Linear Interpolation
-    }
-
-    private void interpolateRotation(List<VxAnimation.Key<Quaternionf>> keys, double time, Quaternionf result) {
-        if (keys.size() == 1) {
-            result.set(keys.get(0).value());
-            return;
-        }
-        int idx = findKeyIndex(keys, time);
-        VxAnimation.Key<Quaternionf> k0 = keys.get(idx);
-        VxAnimation.Key<Quaternionf> k1 = keys.get(idx + 1);
-        float scale = getScaleFactor(k0.time(), k1.time(), time);
-        k0.value().slerp(k1.value(), scale, result); // Spherical Linear Interpolation
-    }
-
-    private void interpolateScaling(List<VxAnimation.Key<Vector3f>> keys, double time, Vector3f result) {
-        if (keys.size() == 1) {
-            result.set(keys.get(0).value());
-            return;
-        }
-        int idx = findKeyIndex(keys, time);
-        VxAnimation.Key<Vector3f> k0 = keys.get(idx);
-        VxAnimation.Key<Vector3f> k1 = keys.get(idx + 1);
-        float scale = getScaleFactor(k0.time(), k1.time(), time);
-        k0.value().lerp(k1.value(), scale, result); // Linear Interpolation
-    }
-
-    /**
-     * Calculates the normalized interpolation factor (0.0 to 1.0) between two keyframe times.
-     */
-    private float getScaleFactor(double last, double next, double now) {
-        float midWay = (float) (now - last);
-        float diff = (float) (next - last);
-        return (diff != 0) ? midWay / diff : 0f;
-    }
-
-    /**
-     * Finds the index of the keyframe immediately preceding the current time.
-     */
-    private <T> int findKeyIndex(List<VxAnimation.Key<T>> keys, double time) {
-        for (int i = 0; i < keys.size() - 1; i++) {
-            if (time < keys.get(i + 1).time()) {
-                return i;
-            }
-        }
-        return 0;
     }
 }

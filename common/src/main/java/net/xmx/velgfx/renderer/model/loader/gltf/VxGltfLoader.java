@@ -18,6 +18,8 @@ import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaMesh;
 import net.xmx.velgfx.renderer.model.VxSkinnedModel;
 import net.xmx.velgfx.renderer.model.VxStaticModel;
 import net.xmx.velgfx.renderer.model.animation.VxAnimation;
+import net.xmx.velgfx.renderer.model.morph.VxMorphController;
+import net.xmx.velgfx.renderer.model.morph.VxMorphTarget;
 import net.xmx.velgfx.renderer.model.skeleton.VxBone;
 import net.xmx.velgfx.renderer.model.skeleton.VxNode;
 import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
@@ -36,7 +38,7 @@ import java.util.Map;
  * <p>
  * This class serves as the entry point for the glTF loading pipeline. It orchestrates the
  * reading of the file stream and delegates the processing of materials, geometry,
- * scene structure, and animations to specialized helper classes.
+ * scene structure, morph targets, and animations to specialized helper classes.
  *
  * @author xI-Mx-Ix
  */
@@ -79,7 +81,6 @@ public class VxGltfLoader {
 
         // 4. Build Node Hierarchy
         // glTF files can contain multiple scenes, but we typically use the default one (index 0).
-        // We create a synthetic root node to hold the glTF scene.
         SceneModel scene = gltfModel.getSceneModels().get(0);
         VxNode rootNode = new VxNode("GLTF_ROOT", null, new Matrix4f());
 
@@ -89,7 +90,6 @@ public class VxGltfLoader {
 
         // 5. Extract Animations and Mappings
         // Map Nodes to specific Draw Commands to support Rigid Body Animation.
-        // Requires passing the full glTF Model to resolve mesh references.
         Map<String, List<VxDrawCommand>> nodeCommands = VxGltfStructure.mapNodesToCommands(gltfModel, scene, allCommands);
         Map<String, VxAnimation> animations = VxGltfAnimation.parseAnimations(gltfModel);
 
@@ -100,13 +100,14 @@ public class VxGltfLoader {
     }
 
     /**
-     * Imports a file as a {@link VxSkinnedModel} suitable for skeletal animation.
+     * Imports a file as a {@link VxSkinnedModel} suitable for skeletal and morph animation.
      * <p>
-     * A skinned model includes additional vertex attributes (Weights and Joints) and
-     * constructs a full skeleton with Inverse Bind Matrices for GPU skinning.
-     * <p>
-     * Unlike Static Models, Skinned Models do not require a Node-to-Command mapping
-     * because the mesh is rendered as a whole and deformed by the shader using bone uniforms.
+     * A skinned model includes:
+     * <ul>
+     *     <li>Vertex Attributes: Weights and Joints for Skinning.</li>
+     *     <li>Skeleton: Inverse Bind Matrices.</li>
+     *     <li>Morph Targets: Extracted deltas loaded into the Texture Buffer Atlas.</li>
+     * </ul>
      *
      * @param location The resource location of the model file.
      * @return A constructed skinned model.
@@ -119,7 +120,6 @@ public class VxGltfLoader {
         List<VxMaterial> materials = VxGltfMaterial.parseMaterials(gltfModel);
 
         // 2. Process Geometry & Extract Bone Definitions
-        // This extracts vertices with Weights/Joints and reads the Skin's Inverse Bind Matrices.
         List<VxDrawCommand> allCommands = new ArrayList<>();
         List<VxGltfStructure.BoneDefinition> boneDefinitions = new ArrayList<>();
 
@@ -134,26 +134,30 @@ public class VxGltfLoader {
         }
 
         // 4. Construct Final Skeleton
-        // Links the flat list of Bone Definitions (from Skin) to the actual Scene Graph Nodes.
         List<VxBone> finalBones = VxGltfStructure.buildSkeletonBones(boneDefinitions, rootNode);
-
-        // In glTF 2.0, Bind Matrices are usually absolute inverse world transforms.
-        // Therefore, the global inverse transform of the model root is typically Identity.
-        Matrix4f globalInverse = new Matrix4f();
-
+        Matrix4f globalInverse = new Matrix4f(); // Identity for glTF 2.0
         VxSkeleton skeleton = new VxSkeleton(rootNode, finalBones, globalInverse);
 
-        // 5. Extract Animations
+        // 5. Extract Morph Targets
+        // This invokes the Morph Loader to process Sparse Accessors and upload to TBO.
+        List<VxMorphTarget> morphTargets = VxGltfMorphLoader.extractMorphTargets(gltfModel);
+        VxMorphController morphController = null;
+        if (!morphTargets.isEmpty()) {
+            morphController = new VxMorphController(morphTargets);
+        }
+
+        // 6. Extract Animations
         Map<String, VxAnimation> animations = VxGltfAnimation.parseAnimations(gltfModel);
 
-        // 6. Upload Geometry to GPU Arena
-        // Skinned models use the Skinned Vertex Layout (80 bytes, high precision floats)
-        // for higher accuracy during vertex deformation in the Compute Shader / Transform Feedback.
+        // 7. Upload Geometry to GPU Arena
+        // Skinned models use the Skinned Vertex Layout (80 bytes, high precision floats).
         VxArenaMesh sourceMesh = VxArenaManager.getInstance()
                 .getArena(VxSkinnedVertexLayout.getInstance())
                 .allocate(geometry.vertices, geometry.indices, allCommands, null);
 
-        return new VxSkinnedModel(skeleton, sourceMesh, animations);
+        // 8. Create Model
+        // Pass the morphController to the constructor
+        return new VxSkinnedModel(skeleton, sourceMesh, animations, morphController);
     }
 
     /**

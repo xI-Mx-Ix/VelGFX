@@ -21,6 +21,13 @@ import java.util.Map;
  * This class iterates through all animations defined in the glTF file, reads the
  * Samplers (Input Time and Output Values) using the {@link VxGltfAccessorUtil}, and
  * converts them into the engine's internal keyframe format.
+ * <p>
+ * It specifically handles:
+ * <ul>
+ *     <li>Vector3 (Translation/Scale)</li>
+ *     <li>Quaternion (Rotation)</li>
+ *     <li>Scalar Array (Morph Weights) - Handling the flattening of weights per frame.</li>
+ * </ul>
  *
  * @author xI-Mx-Ix
  */
@@ -46,39 +53,64 @@ public class VxGltfAnimation {
                 String nodeName = node.getName();
 
                 VxAnimation.NodeChannel vxChannel = channels.computeIfAbsent(nodeName, k ->
-                        new VxAnimation.NodeChannel(new ArrayList<>(), new ArrayList<>(), new ArrayList<>())
+                        new VxAnimation.NodeChannel(new ArrayList<>(), new ArrayList<>(), new ArrayList<>(), new ArrayList<>())
                 );
 
                 AnimationModel.Sampler sampler = channel.getSampler();
 
-                // Use the Accessor Utility to read floats directly
+                // Read Inputs (Time) and Outputs (Values)
                 float[] inputs = VxGltfAccessorUtil.readAccessorAsFloats(sampler.getInput());
                 float[] outputs = VxGltfAccessorUtil.readAccessorAsFloats(sampler.getOutput());
 
-                // Track the maximum duration of the animation
+                // Track animation duration
                 if (inputs.length > 0 && inputs[inputs.length - 1] > maxTime) {
                     maxTime = inputs[inputs.length - 1];
                 }
 
                 String path = channel.getPath();
-                for (int i = 0; i < inputs.length; i++) {
-                    double time = inputs[i];
 
-                    if ("translation".equals(path)) {
+                if ("translation".equals(path)) {
+                    for (int i = 0; i < inputs.length; i++) {
+                        double time = inputs[i];
                         vxChannel.positions.add(new VxAnimation.Key<>(time,
                                 new Vector3f(outputs[i * 3], outputs[i * 3 + 1], outputs[i * 3 + 2])));
-                    } else if ("scale".equals(path)) {
+                    }
+                } else if ("scale".equals(path)) {
+                    for (int i = 0; i < inputs.length; i++) {
+                        double time = inputs[i];
                         vxChannel.scalings.add(new VxAnimation.Key<>(time,
                                 new Vector3f(outputs[i * 3], outputs[i * 3 + 1], outputs[i * 3 + 2])));
-                    } else if ("rotation".equals(path)) {
+                    }
+                } else if ("rotation".equals(path)) {
+                    for (int i = 0; i < inputs.length; i++) {
+                        double time = inputs[i];
                         vxChannel.rotations.add(new VxAnimation.Key<>(time,
                                 new Quaternionf(outputs[i * 4], outputs[i * 4 + 1], outputs[i * 4 + 2], outputs[i * 4 + 3])));
+                    }
+                } else if ("weights".equals(path)) {
+                    // Handle Morph Weights
+                    // The output buffer is flat: [w0_t0, w1_t0, ... wN_t0, w0_t1, ...]
+                    // We need to calculate how many weights exist per keyframe.
+                    int keyframeCount = inputs.length;
+                    int totalValues = outputs.length;
+
+                    if (keyframeCount > 0) {
+                        int weightsPerFrame = totalValues / keyframeCount;
+
+                        for (int i = 0; i < keyframeCount; i++) {
+                            double time = inputs[i];
+                            float[] weightFrame = new float[weightsPerFrame];
+
+                            // Copy the slice for this frame
+                            System.arraycopy(outputs, i * weightsPerFrame, weightFrame, 0, weightsPerFrame);
+
+                            vxChannel.weights.add(new VxAnimation.Key<>(time, weightFrame));
+                        }
                     }
                 }
             }
 
             // Create animation with Ticks Per Second set to 1.0 (since glTF uses Seconds)
-            // This ensures that 'time' in keyframes is interpreted directly as seconds by the Animator.
             animations.put(name, new VxAnimation(name, maxTime, 1.0, channels));
         }
         return animations;

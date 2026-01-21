@@ -13,8 +13,9 @@ import java.util.Map;
 /**
  * Represents a single animation clip (e.g., "Walk", "Run", "Idle").
  * <p>
- * An animation consists of multiple channels. Each channel corresponds to a specific {@link net.xmx.velgfx.renderer.model.skeleton.VxNode}
- * and contains keyframes for Position, Rotation, and Scaling over time.
+ * An animation consists of multiple channels. Each channel corresponds to a specific
+ * {@link net.xmx.velgfx.renderer.model.skeleton.VxNode} and contains time-stamped keyframes
+ * for Position, Rotation, Scaling, and Morph Weights.
  *
  * @author xI-Mx-Ix
  */
@@ -23,6 +24,10 @@ public class VxAnimation {
     private final String name;
     private final double duration;
     private final double ticksPerSecond;
+
+    /**
+     * Map linking Node Names to their specific animation data channels.
+     */
     private final Map<String, NodeChannel> channels;
 
     /**
@@ -40,14 +45,26 @@ public class VxAnimation {
         this.channels = channels;
     }
 
+    /**
+     * Gets the name of the animation.
+     * @return The name.
+     */
     public String getName() {
         return name;
     }
 
+    /**
+     * Gets the total duration of the animation in ticks.
+     * @return The duration.
+     */
     public double getDuration() {
         return duration;
     }
 
+    /**
+     * Gets the number of ticks per second defined in the asset.
+     * @return Ticks per second.
+     */
     public double getTicksPerSecond() {
         return ticksPerSecond;
     }
@@ -55,7 +72,7 @@ public class VxAnimation {
     /**
      * Retrieves the animation channel for a specific node name.
      *
-     * @param nodeName The name of the node.
+     * @param nodeName The name of the node (bone).
      * @return The channel containing keyframes, or null if this node is not animated.
      */
     public NodeChannel getChannel(String nodeName) {
@@ -64,24 +81,63 @@ public class VxAnimation {
 
     /**
      * Holds the keyframes for a single node's animation properties.
+     * <p>
+     * Includes channels for:
+     * <ul>
+     *     <li>Translation (Position)</li>
+     *     <li>Rotation (Quaternion)</li>
+     *     <li>Scale (Vector3)</li>
+     *     <li>Morph Weights (Float Array)</li>
+     * </ul>
      */
     public static class NodeChannel {
+        /**
+         * Keyframes for position changes.
+         */
         public final List<Key<Vector3f>> positions;
+
+        /**
+         * Keyframes for rotation changes.
+         */
         public final List<Key<Quaternionf>> rotations;
+
+        /**
+         * Keyframes for scale changes.
+         */
         public final List<Key<Vector3f>> scalings;
 
-        public NodeChannel(List<Key<Vector3f>> positions, List<Key<Quaternionf>> rotations, List<Key<Vector3f>> scalings) {
+        /**
+         * Keyframes for morph target weight changes.
+         * <p>
+         * The float array corresponds to the sequence of morph targets defined in the glTF mesh.
+         * For example, index 0 in the array maps to Target 0 of the mesh.
+         */
+        public final List<Key<float[]>> weights;
+
+        /**
+         * Constructs a new channel with the specified keyframes.
+         *
+         * @param positions List of position keys.
+         * @param rotations List of rotation keys.
+         * @param scalings  List of scaling keys.
+         * @param weights   List of morph weight keys (can be null or empty).
+         */
+        public NodeChannel(List<Key<Vector3f>> positions,
+                           List<Key<Quaternionf>> rotations,
+                           List<Key<Vector3f>> scalings,
+                           List<Key<float[]>> weights) {
             this.positions = positions;
             this.rotations = rotations;
             this.scalings = scalings;
+            this.weights = weights;
         }
     }
 
     /**
      * Represents a single keyframe at a specific time.
      *
-     * @param <T>  The type of value (Vector3f or Quaternionf).
-     * @param time The time stamp of this keyframe.
+     * @param <T>   The type of value stored (Vector3f, Quaternionf, or float[]).
+     * @param time  The time stamp of this keyframe in ticks.
      * @param value The value at this time.
      */
     public record Key<T>(double time, T value) {}

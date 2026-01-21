@@ -9,6 +9,8 @@ import net.fabricmc.api.Environment;
 import net.minecraft.resources.ResourceLocation;
 import net.xmx.velgfx.example.body.cesium.CesiumManBody;
 import net.xmx.velgfx.example.body.cesium.CesiumManRenderer;
+import net.xmx.velgfx.example.body.cube.AnimatedCubeBody;
+import net.xmx.velgfx.example.body.cube.AnimatedCubeRenderer;
 import net.xmx.velgfx.example.body.soccerball.SoccerBallRenderer;
 import net.xmx.velgfx.example.body.soccerball.SoccerBallRigidBody;
 import net.xmx.velgfx.example.fabric.ExampleMod;
@@ -42,12 +44,20 @@ public class BodyRegistry {
             .build(ResourceLocation.tryBuild(ExampleMod.MODID, "cesium_man"));
 
     /**
+     * The Animated Morph Cube sample model.
+     */
+    public static final VxBodyType<AnimatedCubeBody> ANIMATED_CUBE = VxBodyType.Builder
+            .<AnimatedCubeBody>create(AnimatedCubeBody::new)
+            .build(ResourceLocation.tryBuild(ExampleMod.MODID, "animated_cube"));
+
+    /**
      * Registers the body types to the global physics registry.
      */
     public static void register() {
         var registry = VxBodyRegistry.getInstance();
         registry.register(SOCCER_BALL);
         registry.register(CESIUM_MAN);
+        registry.register(ANIMATED_CUBE);
     }
 
     /**
@@ -63,6 +73,9 @@ public class BodyRegistry {
 
         registry.registerClientFactory(CESIUM_MAN.getTypeId(),
                 (type, id) -> new CesiumManBody((VxBodyType<CesiumManBody>) type, id));
+
+        registry.registerClientFactory(ANIMATED_CUBE.getTypeId(),
+                (type, id) -> new AnimatedCubeBody((VxBodyType<AnimatedCubeBody>) type, id));
     }
 
     /**
@@ -74,5 +87,6 @@ public class BodyRegistry {
 
         registry.registerClientRenderer(SOCCER_BALL.getTypeId(), new SoccerBallRenderer());
         registry.registerClientRenderer(CESIUM_MAN.getTypeId(), new CesiumManRenderer());
+        registry.registerClientRenderer(ANIMATED_CUBE.getTypeId(), new AnimatedCubeRenderer());
     }
 }

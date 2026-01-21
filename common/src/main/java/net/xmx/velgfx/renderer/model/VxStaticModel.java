@@ -37,7 +37,7 @@ public class VxStaticModel extends VxModel {
      * @param nodeDrawCommands The mapping of node names to specific draw commands.
      */
     public VxStaticModel(VxSkeleton skeleton, VxArenaMesh mesh, Map<String, VxAnimation> animations, Map<String, List<VxDrawCommand>> nodeDrawCommands) {
-        super(skeleton.getRootNode(), mesh, animations);
+        super(skeleton.getRootNode(), mesh, animations, null);
         this.skeleton = skeleton;
         this.nodeDrawCommands = nodeDrawCommands;
     }

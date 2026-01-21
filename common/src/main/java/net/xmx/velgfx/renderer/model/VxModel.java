@@ -8,6 +8,7 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import net.xmx.velgfx.renderer.gl.mesh.IVxRenderableMesh;
 import net.xmx.velgfx.renderer.model.animation.VxAnimation;
 import net.xmx.velgfx.renderer.model.animation.VxAnimator;
+import net.xmx.velgfx.renderer.model.morph.VxMorphController;
 import net.xmx.velgfx.renderer.model.skeleton.VxNode;
 import net.xmx.velgfx.renderer.model.skeleton.VxSocket;
 import org.joml.Matrix4f;
@@ -47,12 +48,13 @@ public abstract class VxModel {
      * @param rootNode   The root of the scene hierarchy.
      * @param mesh       The renderable mesh resource.
      * @param animations The map of animation clips.
+     * @param morphController The controller for morph targets.
      */
-    protected VxModel(VxNode rootNode, IVxRenderableMesh mesh, Map<String, VxAnimation> animations) {
+    protected VxModel(VxNode rootNode, IVxRenderableMesh mesh, Map<String, VxAnimation> animations, VxMorphController morphController) {
         this.rootNode = rootNode;
         this.mesh = mesh;
         this.animations = animations != null ? animations : Collections.emptyMap();
-        this.animator = new VxAnimator(rootNode);
+        this.animator = new VxAnimator(rootNode, morphController);
     }
 
     /**

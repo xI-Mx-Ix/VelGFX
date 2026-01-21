@@ -4,25 +4,36 @@
  */
 package net.xmx.velgfx.renderer.gl.shader.impl;
 
+import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxMorphTextureAtlas;
 import net.xmx.velgfx.renderer.gl.shader.VxShaderProgram;
 import net.xmx.velgfx.resources.VxResourceLocation;
 import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL30;
 
 /**
- * A specialized shader program for skeletal animation (skinning).
+ * A specialized shader program for skeletal animation (skinning) and morph target blending.
  * <p>
- * This shader performs vertex skinning on the GPU and outputs the transformed
+ * This shader performs vertex deformation on the GPU and outputs the transformed
  * vertices via Transform Feedback to be rendered by the main pass.
  * <p>
- * This class operates as a Singleton to ensure only one instance of the
- * skinning program exists within the OpenGL context.
+ * Updates:
+ * <ul>
+ *     <li>Added uniforms for Morph Target TBO (Texture Buffer Object).</li>
+ *     <li>Added logic to upload active morph indices and weights.</li>
+ * </ul>
  *
  * @author xI-Mx-Ix
  */
 public class VxSkinningShader extends VxShaderProgram {
 
     private static final int MAX_BONES = 100;
+    private static final int MAX_ACTIVE_MORPHS = 8;
+
+    /**
+     * Hardcoded Texture Unit for Morph TBO.
+     * Slot 0 is generally safe for Vertex Shader access.
+     */
+    private static final int MORPH_TBO_UNIT = 0;
 
     private static final VxResourceLocation VERTEX_SOURCE =
             new VxResourceLocation("velgfx", "shaders/skinning.vsh");
@@ -64,36 +75,69 @@ public class VxSkinningShader extends VxShaderProgram {
      */
     @Override
     protected void preLink(int programId) {
+        // Output varyings for Transform Feedback
         CharSequence[] varyings = {
-                "out_Pos",      // vec3
-                "out_Normal",   // vec3
-                "out_UV",       // vec2
-                "out_Tangent"   // vec4
+                "out_Pos",
+                "out_Normal",
+                "out_UV",
+                "out_Tangent"
         };
-
-        // GL_INTERLEAVED_ATTRIBS writes all variables into a single buffer, packed continuously.
         GL30.glTransformFeedbackVaryings(programId, varyings, GL30.GL_INTERLEAVED_ATTRIBS);
     }
 
     @Override
     protected void registerUniforms() {
-        // Register array uniforms for bone matrices
-        // Assumes uniform name "u_BoneMatrices" as per shader logic
+        // Bone Matrices
         for (int i = 0; i < MAX_BONES; i++) {
             super.createUniform("u_BoneMatrices[" + i + "]");
+        }
+
+        // Morph Targets
+        super.createUniform("u_MorphDeltas"); // SamplerBuffer
+        super.createUniform("u_ActiveMorphCount");
+        super.createUniform("u_MeshBaseVertex");
+
+        for (int i = 0; i < MAX_ACTIVE_MORPHS; i++) {
+            super.createUniform("u_ActiveMorphIndices[" + i + "]");
+            super.createUniform("u_ActiveMorphWeights[" + i + "]");
         }
     }
 
     /**
      * Uploads the joint (bone) transformation matrices to the GPU.
      *
-     * @param jointMatrices The flat array of bone matrices (16 floats per bone).
+     * @param jointMatrices The flat array of bone matrices.
      */
     public void loadJointTransforms(float[] jointMatrices) {
-        // Upload the entire array to the uniform array location
         int location = super.getUniformLocation("u_BoneMatrices[0]");
         if (location != -1) {
             GL20.glUniformMatrix4fv(location, false, jointMatrices);
+        }
+    }
+
+    /**
+     * Configures the shader for the current mesh's morph state.
+     *
+     * @param indices        Array of size 8 containing TBO offsets for active targets.
+     * @param weights        Array of size 8 containing weights (0-1).
+     * @param count          Number of active targets.
+     * @param meshBaseVertex The absolute start index of the mesh in the Arena VBO.
+     */
+    public void loadMorphState(int[] indices, float[] weights, int count, int meshBaseVertex) {
+        // Bind the TBO
+        VxMorphTextureAtlas.getInstance().bind(MORPH_TBO_UNIT);
+        super.setUniform("u_MorphDeltas", MORPH_TBO_UNIT);
+
+        super.setUniform("u_ActiveMorphCount", count);
+        super.setUniform("u_MeshBaseVertex", meshBaseVertex);
+
+        // Upload Arrays (Bulk upload)
+        if (indices != null && weights != null) {
+            int locIndices = super.getUniformLocation("u_ActiveMorphIndices[0]");
+            int locWeights = super.getUniformLocation("u_ActiveMorphWeights[0]");
+
+            if (locIndices != -1) GL20.glUniform1iv(locIndices, indices);
+            if (locWeights != -1) GL20.glUniform1fv(locWeights, weights);
         }
     }
 }

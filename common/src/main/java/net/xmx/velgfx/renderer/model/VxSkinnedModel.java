@@ -6,14 +6,16 @@ package net.xmx.velgfx.renderer.model;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.layout.VxSkinnedResultVertexLayout;
 import net.xmx.velgfx.renderer.gl.layout.VxSkinnedVertexLayout;
 import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaMesh;
 import net.xmx.velgfx.renderer.gl.mesh.arena.VxMemorySegment;
-import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxSkinningArena;
 import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxSkinnedResultMesh;
+import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxSkinningArena;
 import net.xmx.velgfx.renderer.gl.shader.impl.VxSkinningShader;
 import net.xmx.velgfx.renderer.model.animation.VxAnimation;
+import net.xmx.velgfx.renderer.model.morph.VxMorphController;
 import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
@@ -22,16 +24,25 @@ import org.lwjgl.opengl.GL40;
 import java.util.Map;
 
 /**
- * A model capable of hardware vertex skinning via Transform Feedback, utilizing the
- * centralized {@link VxSkinningArena} for memory management.
+ * A specialized model that supports hardware vertex skinning and morph target animation.
  * <p>
- * This class orchestrates the animation pipeline:
+ * This class utilizes a <b>Transform Feedback</b> pipeline to perform vertex deformation on the GPU.
+ * It manages the lifecycle of dynamic memory within the {@link VxSkinningArena} and orchestrates
+ * the compute pass that applies both Morph Deltas (read from a Texture Buffer Object) and
+ * Skeletal Deformations (via Matrix Palette Skinning).
+ * <p>
+ * <b>Pipeline Overview:</b>
  * <ol>
- *     <li>Updates the {@link VxSkeleton} based on animation time.</li>
- *     <li>Allocates a dynamic segment in the global Skinning Arena (instead of owning a private VBO).</li>
- *     <li>Executes a Compute Pass using {@link VxSkinningShader}, reading from the {@code sourceMesh} (Arena)
- *     and writing into the allocated {@code resultSegment}.</li>
- *     <li>Submits a proxy mesh (which references the global Arena VAO) to the render queue.</li>
+ *     <li><b>Update:</b> Advances animation time, updates the node hierarchy, and sorts active morph targets.</li>
+ *     <li><b>Compute Pass:</b>
+ *         <ul>
+ *             <li>Reads static vertices (Bind Pose) from the Source Arena Mesh.</li>
+ *             <li>Reads Morph Deltas from the TBO.</li>
+ *             <li>Applies Linear Blend Skinning.</li>
+ *             <li>Writes transformed vertices to a dynamic segment in the {@link VxSkinningArena}.</li>
+ *         </ul>
+ *     </li>
+ *     <li><b>Render Pass:</b> Submits a proxy mesh pointing to the transformed data in the Arena.</li>
  * </ol>
  *
  * @author xI-Mx-Ix
@@ -59,21 +70,30 @@ public class VxSkinnedModel extends VxModel {
     private final VxSkinnedResultMesh renderProxy;
 
     /**
+     * Manages the runtime state of morph targets (weights, sorting, active selection).
+     * Can be null if the model has no morph targets.
+     */
+    private final VxMorphController morphController;
+
+    /**
      * Flattened array holding 4x4 matrices for all bones (Max 100 bones * 16 floats).
+     * Used to upload the matrix palette to the shader uniform.
      */
     private final float[] boneMatrices = new float[100 * 16];
 
     /**
      * Constructs a new Skinned Model and initializes the skeletal state.
      *
-     * @param skeleton   The skeleton hierarchy containing bones and nodes.
-     * @param sourceMesh The source mesh handle located in the Skinned Arena Buffer.
-     * @param animations The map of available animation clips.
+     * @param skeleton        The skeleton hierarchy containing bones and nodes.
+     * @param sourceMesh      The source mesh handle located in the Skinned Arena Buffer.
+     * @param animations      The map of available animation clips.
+     * @param morphController The controller for morph targets (optional, can be null).
      */
-    public VxSkinnedModel(VxSkeleton skeleton, VxArenaMesh sourceMesh, Map<String, VxAnimation> animations) {
-        super(skeleton.getRootNode(), sourceMesh, animations);
+    public VxSkinnedModel(VxSkeleton skeleton, VxArenaMesh sourceMesh, Map<String, VxAnimation> animations, VxMorphController morphController) {
+        super(skeleton.getRootNode(), sourceMesh, animations, morphController);
         this.skeleton = skeleton;
         this.sourceMesh = sourceMesh;
+        this.morphController = morphController;
 
         // 1. Calculate the required size for the result buffer
         // Input Size (Vertices) * Output Stride (48 bytes)
@@ -93,15 +113,29 @@ public class VxSkinnedModel extends VxModel {
         this.skeleton.getRootNode().updateHierarchy(null);
     }
 
+    /**
+     * Creates an independent instance of this model.
+     * <p>
+     * The new instance shares the heavy GPU geometry (Source Mesh) and Animation definitions,
+     * but possesses its own unique:
+     * <ul>
+     *     <li><b>Skeleton:</b> Allows independent skeletal animation.</li>
+     *     <li><b>Morph Controller:</b> Allows independent facial expressions.</li>
+     *     <li><b>Output Buffer:</b> Allocates a new segment in the Skinning Arena.</li>
+     * </ul>
+     *
+     * @return A new model instance.
+     */
     @Override
     public VxSkinnedModel createInstance() {
         // 1. Copy Skeleton (Nodes + Bones)
         VxSkeleton newSkeleton = this.skeleton.deepCopy();
 
-        // 2. Return new model with shared source geometry but unique output segment
-        // Note: Sockets are NOT copied automatically as they may need
-        // different attachments per instance. They must be re-created by the user if needed.
-        return new VxSkinnedModel(newSkeleton, this.sourceMesh, this.animations);
+        // 2. Copy Morph Controller (if present) to maintain independent weights
+        VxMorphController newMorphs = (this.morphController != null) ? this.morphController.copy() : null;
+
+        // 3. Return new model
+        return new VxSkinnedModel(newSkeleton, this.sourceMesh, this.animations, newMorphs);
     }
 
     /**
@@ -111,19 +145,34 @@ public class VxSkinnedModel extends VxModel {
      */
     @Override
     public void update(float dt) {
-        // 1. CPU Animation Update (interpolate keyframes, blending, update node matrices)
+        // 1. CPU Animation Update
+        // This advances the Animator, which updates Node Transforms (Skeleton)
+        // and Morph Weights (via the MorphController).
         super.update(dt);
 
-        // 2. Flatten bone matrices for upload
+        // 2. Update Morph Controller State
+        // Sorts active targets by weight and prepares data for the shader.
+        if (morphController != null) {
+            morphController.update();
+        }
+
+        // 3. Flatten bone matrices for upload
         skeleton.updateBoneMatrices(boneMatrices);
 
-        // 3. GPU Skinning Pass (Transform Feedback)
+        // 4. GPU Skinning Pass (Transform Feedback)
         performSkinningPass();
     }
 
     /**
      * Executes the actual compute pass on the GPU.
-     * Reads from Source Arena (indexed) -> Writes to the allocated Segment in Skinning Arena (linear).
+     * <p>
+     * <b>Process:</b>
+     * <ol>
+     *     <li>Binds the Skinning Shader.</li>
+     *     <li>Uploads Bone Matrices and Active Morph Targets.</li>
+     *     <li>Binds the Source VAO (Input) and Destination TFO (Output).</li>
+     *     <li>Dispatches a {@code glDrawArrays(GL_POINTS)} command to process vertices linearly.</li>
+     * </ol>
      */
     private void performSkinningPass() {
         VxSkinningArena arena = VxSkinningArena.getInstance();
@@ -139,25 +188,38 @@ public class VxSkinnedModel extends VxModel {
         // This binds the Static VAO, which includes the Static VBO and Static EBO.
         sourceMesh.setupVaoState();
 
-        // 2. Bind Output Data (Specific Segment in Giant Buffer)
+        // 2. Upload Morph State (if applicable)
+        if (morphController != null) {
+            // We need the absolute base vertex index of the source mesh in the VBO.
+            // This is required by the shader to calculate the correct offset into the Morph TBO.
+            int baseVertex = sourceMesh.resolveCommand(
+                    new VxDrawCommand(null, 0, 0, 0)
+            ).baseVertex;
+
+            morphController.applyToShader(shader, baseVertex);
+        } else {
+            // Ensure shader knows there are no active morphs
+            shader.loadMorphState(null, null, 0, 0);
+        }
+
+        // 3. Bind Output Data (Specific Segment in Giant Buffer)
         // This sets up the Global TFO to point to our specific slice of the VBO.
         arena.bindForFeedback(resultSegment);
 
-        // 3. Begin Transform Feedback
+        // 4. Begin Transform Feedback
         // We use GL_POINTS to process vertices one-by-one linearly.
         GL40.glBeginTransformFeedback(GL11.GL_POINTS);
 
-        // Get the total number of vertices in this mesh segment
-        int totalVertexCount = (int) (sourceMesh.getVertexSegment().size / net.xmx.velgfx.renderer.gl.layout.VxSkinnedVertexLayout.STRIDE);
-
-        // Get the absolute start vertex index in the Source VBO.
-        // We can create a dummy command at 0 to resolve the base vertex offset.
-        int firstVertex = sourceMesh.resolveCommand(new net.xmx.velgfx.renderer.gl.VxDrawCommand(null, 0, 0, 0)).baseVertex;
+        // Calculate vertex count and offset
+        int totalVertexCount = (int) (sourceMesh.getVertexSegment().size / VxSkinnedVertexLayout.STRIDE);
+        int firstVertex = sourceMesh.resolveCommand(
+                new VxDrawCommand(null, 0, 0, 0)
+        ).baseVertex;
 
         // Draw the vertex range linearly
         GL11.glDrawArrays(GL11.GL_POINTS, firstVertex, totalVertexCount);
 
-        // 4. End Feedback and Cleanup
+        // 5. End Feedback and Cleanup
         GL40.glEndTransformFeedback();
         arena.unbindFeedback();
 
@@ -169,7 +231,7 @@ public class VxSkinnedModel extends VxModel {
     /**
      * Renders the model.
      * <p>
-     * Instead of queuing the source mesh (which holds bind pose), we queue the
+     * Instead of queuing the source mesh (which holds the bind pose), we queue the
      * {@code renderProxy} which points to the transformed data in the Skinning Arena.
      *
      * @param poseStack   The current transformation stack.
@@ -177,7 +239,7 @@ public class VxSkinnedModel extends VxModel {
      */
     @Override
     public void render(PoseStack poseStack, int packedLight) {
-        // 1. Render the main skinned character mesh
+        // 1. Render the main skinned character mesh (Output of Transform Feedback)
         renderProxy.queueRender(poseStack, packedLight);
 
         // 2. Render any attachments (weapons, items) linked to the sockets
@@ -185,24 +247,38 @@ public class VxSkinnedModel extends VxModel {
     }
 
     /**
-     * Releases all GPU resources associated with this model.
+     * Releases all GPU resources specific to this model instance.
+     * <p>
+     * Note: Shared resources (Source Mesh, Morph Atlas data) are NOT deleted here
+     * as they are managed by the global Managers.
      */
     @Override
     public void delete() {
-        // Return the allocated segment to the Arena pool
+        // Return the allocated segment to the Arena pool for reuse
         VxSkinningArena.getInstance().free(resultSegment);
 
-        // Mark the proxy as deleted to prevent rendering
+        // Mark the proxy as deleted to prevent accidental rendering
         renderProxy.delete();
 
-        // Call super to clean up attachments
+        // Call super to clean up attachments (Sockets)
         super.delete();
-
-        // Note: The sourceMesh is shared among instances and managed by VxArenaManager,
-        // so we do not delete it here.
     }
 
+    /**
+     * Retrieves the skeleton controlling this model.
+     *
+     * @return The skeleton instance.
+     */
     public VxSkeleton getSkeleton() {
         return skeleton;
+    }
+
+    /**
+     * Retrieves the controller for morph targets.
+     *
+     * @return The morph controller, or null if not available.
+     */
+    public VxMorphController getMorph() {
+        return morphController;
     }
 }
