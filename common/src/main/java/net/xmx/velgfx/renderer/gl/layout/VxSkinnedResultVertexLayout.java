@@ -4,13 +4,14 @@
  */
 package net.xmx.velgfx.renderer.gl.layout;
 
+import net.xmx.velgfx.renderer.gl.shader.impl.VxSkinningShader;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL30;
 
 /**
  * Represents the vertex layout for the output of the hardware skinning pass (Transform Feedback).
  * <p>
- * This layout corresponds to the data written by the {@link net.xmx.velgfx.renderer.gl.shader.VxSkinningShader}
+ * This layout corresponds to the data written by the {@link VxSkinningShader}
  * into the dynamic Result VBO. It does not contain bone weights or indices, as the geometry
  * has already been transformed into World/Camera space.
  * <p>

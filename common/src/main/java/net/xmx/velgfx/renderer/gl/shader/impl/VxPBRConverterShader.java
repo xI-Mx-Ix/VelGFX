@@ -2,8 +2,9 @@
  * This file is part of VelGFX.
  * Licensed under LGPL 3.0.
  */
-package net.xmx.velgfx.renderer.gl.shader;
+package net.xmx.velgfx.renderer.gl.shader.impl;
 
+import net.xmx.velgfx.renderer.gl.shader.VxShaderProgram;
 import net.xmx.velgfx.resources.VxResourceLocation;
 
 /**

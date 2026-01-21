@@ -12,7 +12,7 @@ import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaMesh;
 import net.xmx.velgfx.renderer.gl.mesh.arena.VxMemorySegment;
 import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxSkinningArena;
 import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxSkinnedResultMesh;
-import net.xmx.velgfx.renderer.gl.shader.VxSkinningShader;
+import net.xmx.velgfx.renderer.gl.shader.impl.VxSkinningShader;
 import net.xmx.velgfx.renderer.model.animation.VxAnimation;
 import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
 import org.lwjgl.opengl.GL11;

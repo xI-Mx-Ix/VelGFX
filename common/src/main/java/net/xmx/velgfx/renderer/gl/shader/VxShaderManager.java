@@ -4,6 +4,9 @@
  */
 package net.xmx.velgfx.renderer.gl.shader;
 
+import net.xmx.velgfx.renderer.gl.shader.impl.VxPBRConverterShader;
+import net.xmx.velgfx.renderer.gl.shader.impl.VxSkinningShader;
+
 /**
  * The central manager for all shader programs used by the renderer.
  * <p>

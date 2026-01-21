@@ -82,7 +82,7 @@ public abstract class VxShaderProgram implements AutoCloseable {
     }
 
     /**
-     * Loads source code from the resource loader and compiles the shader object.
+     * Loads source code from the resource loader, processes imports, and compiles the shader.
      *
      * @param location The resource location.
      * @param type     The GL shader type (e.g., GL_VERTEX_SHADER).
@@ -90,15 +90,27 @@ public abstract class VxShaderProgram implements AutoCloseable {
      * @throws IOException If the file cannot be read.
      */
     private int loadAndCompileShader(VxResourceLocation location, int type) throws IOException {
-        String source = VxShaderResourceLoader.loadShaderSource(location);
-        int shaderId = GL20.glCreateShader(type);
+        // 1. Load Raw Source
+        String rawSource = VxShaderResourceLoader.loadShaderSource(location);
 
-        GL20.glShaderSource(shaderId, source);
+        // 2. Preprocess Source (Resolve #import directives)
+        VxGlslPreprocessor preprocessor = new VxGlslPreprocessor();
+        String processedSource = preprocessor.process(rawSource, location);
+
+        // 3. Compile
+        int shaderId = GL20.glCreateShader(type);
+        GL20.glShaderSource(shaderId, processedSource);
         GL20.glCompileShader(shaderId);
 
         if (GL20.glGetShaderi(shaderId, GL20.GL_COMPILE_STATUS) == GL20.GL_FALSE) {
             String log = GL20.glGetShaderInfoLog(shaderId);
             String typeStr = (type == GL20.GL_VERTEX_SHADER) ? "Vertex" : "Fragment";
+
+            // Log the processed source to help debug preprocessor issues if compilation fails
+            VelGFX.LOGGER.error("--- Failed Shader Source ({}) ---", location);
+            VelGFX.LOGGER.error(processedSource);
+            VelGFX.LOGGER.error("-----------------------------------");
+
             throw new IllegalStateException("Shader Compilation Error (" + typeStr + "): " + log);
         }
 
@@ -189,6 +201,28 @@ public abstract class VxShaderProgram implements AutoCloseable {
             FloatBuffer buffer = stack.mallocFloat(16);
             matrix.get(buffer);
             GL20.glUniformMatrix4fv(location, false, buffer);
+        }
+    }
+
+    /**
+     * Uploads a float array (vec1, vec2, vec3, or vec4) to a uniform variable.
+     * <p>
+     * This method automatically detects the vector size based on the array length
+     * and calls the appropriate {@code glUniformNfv} function.
+     *
+     * @param name   The name of the uniform variable.
+     * @param values The float array containing the values (length 1 to 4).
+     */
+    public void setUniform(String name, float[] values) {
+        int location = getUniformLocation(name);
+        if (location == -1) return;
+
+        switch (values.length) {
+            case 1 -> GL20.glUniform1fv(location, values);
+            case 2 -> GL20.glUniform2fv(location, values);
+            case 3 -> GL20.glUniform3fv(location, values);
+            case 4 -> GL20.glUniform4fv(location, values);
+            default -> VelGFX.LOGGER.warn("Unsupported uniform array size for '{}': {}", name, values.length);
         }
     }
 
