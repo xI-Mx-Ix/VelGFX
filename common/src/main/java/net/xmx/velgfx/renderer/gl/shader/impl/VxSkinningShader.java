@@ -7,6 +7,7 @@ package net.xmx.velgfx.renderer.gl.shader.impl;
 import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxMorphTextureAtlas;
 import net.xmx.velgfx.renderer.gl.shader.VxShaderProgram;
 import net.xmx.velgfx.resources.VxResourceLocation;
+import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL30;
 
@@ -95,7 +96,7 @@ public class VxSkinningShader extends VxShaderProgram {
         }
 
         // Morph Targets
-        super.createUniform("u_MorphDeltas"); // SamplerBuffer
+        super.createUniform("u_MorphDeltas");
         super.createUniform("u_ActiveMorphCount");
         super.createUniform("u_MeshBaseVertex");
 
@@ -103,6 +104,22 @@ public class VxSkinningShader extends VxShaderProgram {
             super.createUniform("u_ActiveMorphIndices[" + i + "]");
             super.createUniform("u_ActiveMorphWeights[" + i + "]");
         }
+
+        // Base Transform for unskinned meshes
+        super.createUniform("u_BaseTransform");
+    }
+
+    /**
+     * Uploads the global transformation matrix of the model's root node.
+     * <p>
+     * This matrix is used by the shader to transform vertices that are not influenced
+     * by any bones (rigid geometry with morph targets), ensuring they respect the
+     * model's scale and rotation defined in the glTF node hierarchy.
+     *
+     * @param transform The 4x4 transformation matrix.
+     */
+    public void loadBaseTransform(Matrix4f transform) {
+        super.setUniform("u_BaseTransform", transform);
     }
 
     /**

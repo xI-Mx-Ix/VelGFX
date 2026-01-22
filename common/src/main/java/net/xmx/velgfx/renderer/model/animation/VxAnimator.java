@@ -211,42 +211,60 @@ public class VxAnimator {
     /**
      * Recursively processes the node tree, calculating transforms and applying morphs.
      * <p>
-     * This is the core interpolation loop. It visits every node, samples the animation curves,
-     * blends them if necessary, and updates the {@link VxNode} matrices and {@link VxMorphController}.
+     * This ensures that the initial transform state is derived from the node's static Bind Pose,
+     * which is then selectively overridden only by properties actually present in the animation.
+     *
+     * @param node            The current node being processed.
+     * @param parentTransform The calculated global transform of the parent node.
      */
     private void processNode(VxNode node, Matrix4f parentTransform) {
         String nodeName = node.getName();
         Matrix4f bindPose = node.getLocalTransform();
 
+        // 1. Initialize interpolation targets with the Node's static Bind Pose.
+        // This preserves static properties (e.g., scale) if the animation track does not modify them.
+        bindPose.getTranslation(interpPosA);
+        bindPose.getUnnormalizedRotation(interpRotA);
+        bindPose.getScale(interpScaleA);
+
         // --- Animation A (Current) ---
         VxAnimation.NodeChannel channelA = currentAnimation.getChannel(nodeName);
         if (channelA != null) {
-            interpolatePosition(channelA.positions, currentTime, interpPosA);
-            interpolateRotation(channelA.rotations, currentTime, interpRotA);
-            interpolateScaling(channelA.scalings, currentTime, interpScaleA);
+            // Only interpolate if keyframes exist for the specific property
+            if (!channelA.positions.isEmpty()) {
+                interpolatePosition(channelA.positions, currentTime, interpPosA);
+            }
+            if (!channelA.rotations.isEmpty()) {
+                interpolateRotation(channelA.rotations, currentTime, interpRotA);
+            }
+            if (!channelA.scalings.isEmpty()) {
+                interpolateScaling(channelA.scalings, currentTime, interpScaleA);
+            }
 
-            // If NOT blending, apply morphs directly here to save perf
+            // Apply morphs directly if not blending
             if (!isBlending) {
                 applyMorphsDirectly(channelA, currentTime);
             }
-        } else {
-            // Fallback to bind pose components
-            bindPose.getTranslation(interpPosA);
-            bindPose.getUnnormalizedRotation(interpRotA);
-            bindPose.getScale(interpScaleA);
         }
 
         // --- Animation B (Blending Target) ---
         if (isBlending && nextAnimation != null) {
+            // Initialize targets for Animation B with Bind Pose as well
+            bindPose.getTranslation(interpPosB);
+            bindPose.getUnnormalizedRotation(interpRotB);
+            bindPose.getScale(interpScaleB);
+
             VxAnimation.NodeChannel channelB = nextAnimation.getChannel(nodeName);
             if (channelB != null) {
-                interpolatePosition(channelB.positions, nextAnimationTime, interpPosB);
-                interpolateRotation(channelB.rotations, nextAnimationTime, interpRotB);
-                interpolateScaling(channelB.scalings, nextAnimationTime, interpScaleB);
-            } else {
-                bindPose.getTranslation(interpPosB);
-                bindPose.getUnnormalizedRotation(interpRotB);
-                bindPose.getScale(interpScaleB);
+                if (!channelB.positions.isEmpty()) {
+                    interpolatePosition(channelB.positions, nextAnimationTime, interpPosB);
+                }
+                if (!channelB.rotations.isEmpty()) {
+                    interpolateRotation(channelB.rotations, nextAnimationTime, interpRotB);
+                }
+                if (!channelB.scalings.isEmpty()) {
+                    interpolateScaling(channelB.scalings, nextAnimationTime, interpScaleB);
+                }
             }
 
             // Linear/Spherical Interpolation for TRS
@@ -254,7 +272,7 @@ public class VxAnimator {
             interpRotA.slerp(interpRotB, blendFactor);
             interpScaleA.lerp(interpScaleB, blendFactor);
 
-            // Special blending logic for Morph Weights (Float Arrays)
+            // Special blending logic for Morph Weights
             blendMorphs(channelA, channelB);
         }
 

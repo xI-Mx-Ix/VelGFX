@@ -17,6 +17,7 @@ import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxSkinningArena;
 import net.xmx.velgfx.renderer.gl.shader.impl.VxSkinningShader;
 import net.xmx.velgfx.renderer.model.animation.VxAnimation;
 import net.xmx.velgfx.renderer.model.morph.VxMorphController;
+import net.xmx.velgfx.renderer.model.skeleton.VxNode;
 import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
 import net.xmx.velgfx.renderer.util.VxGlGarbageCollector;
 import org.lwjgl.opengl.GL11;
@@ -196,6 +197,13 @@ public class VxSkinnedModel extends VxModel {
         try {
             shader.bind();
             shader.loadJointTransforms(boneMatrices);
+
+            // Determine the base transformation for unskinned geometry.
+            VxNode modelRoot = skeleton.getRootNode();
+            if (!modelRoot.getChildren().isEmpty()) {
+                modelRoot = modelRoot.getChildren().get(0);
+            }
+            shader.loadBaseTransform(modelRoot.getGlobalTransform());
 
             // Disable rasterization because we are only processing vertices, not drawing pixels.
             GL11.glEnable(GL30.GL_RASTERIZER_DISCARD);
