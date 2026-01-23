@@ -45,6 +45,8 @@ public final class VxPBRGenerator {
      * <ul>
      *     <li>Red: Smoothness (1.0 - Roughness)</li>
      *     <li>Green: Metallic</li>
+     *     <li>Blue: Reserved (0)</li>
+     *     <li>Alpha: Emissive Strength (Must be 0 for fallback, otherwise model glows)</li>
      * </ul>
      *
      * @param roughness The scalar roughness value (0.0 - 1.0).
@@ -54,7 +56,7 @@ public final class VxPBRGenerator {
     public static int generateMetallicRoughnessMap(float roughness, float metallic) {
         byte r = (byte) ((1.0f - roughness) * 255.0f);
         byte g = (byte) (metallic * 255.0f);
-        return create1x1Texture(r, g, (byte) 0, (byte) 255);
+        return create1x1Texture(r, g, (byte) 0, (byte) 0);
     }
 
     /**

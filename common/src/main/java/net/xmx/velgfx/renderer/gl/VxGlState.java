@@ -14,7 +14,7 @@ import org.lwjgl.opengl.*;
  * and restore them afterward.
  * <p>
  * This isolation is essential when mixing custom OpenGL calls with the vanilla Minecraft
- * rendering engine (Blaze3D) or external mods like Iris/OptiFine, preventing state leakage
+ * rendering engine (Blaze3D) or external mods like Iris, preventing state leakage
  * such as wrong shaders being active or texture units being overwritten.
  *
  * @author xI-Mx-Ix

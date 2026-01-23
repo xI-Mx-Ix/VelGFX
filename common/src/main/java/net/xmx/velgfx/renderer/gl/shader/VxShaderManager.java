@@ -4,6 +4,7 @@
  */
 package net.xmx.velgfx.renderer.gl.shader;
 
+import net.xmx.velgfx.renderer.gl.shader.impl.VxVanillaExtendedShader;
 import net.xmx.velgfx.renderer.gl.shader.impl.VxPBRConverterShader;
 import net.xmx.velgfx.renderer.gl.shader.impl.VxSkinningShader;
 
@@ -19,6 +20,7 @@ public class VxShaderManager implements AutoCloseable {
 
     private final VxSkinningShader skinningShader;
     private final VxPBRConverterShader pbrConverterShader;
+    private final VxVanillaExtendedShader vanillaExtendedShader;
 
     /**
      * Initializes all shader programs.
@@ -27,6 +29,7 @@ public class VxShaderManager implements AutoCloseable {
     public VxShaderManager() {
         this.skinningShader = new VxSkinningShader();
         this.pbrConverterShader = new VxPBRConverterShader();
+        this.vanillaExtendedShader = new VxVanillaExtendedShader();
     }
 
     /**
@@ -48,11 +51,22 @@ public class VxShaderManager implements AutoCloseable {
     }
 
     /**
+     * Gets the Vanilla Extended Shader program.
+     *
+     * @return The entity shader instance.
+     */
+    public VxVanillaExtendedShader getVanillaExtendedShader() {
+        return vanillaExtendedShader;
+    }
+
+
+    /**
      * Releases all shader resources.
      */
     @Override
     public void close() {
         skinningShader.close();
         pbrConverterShader.close();
+        vanillaExtendedShader.close();
     }
 }

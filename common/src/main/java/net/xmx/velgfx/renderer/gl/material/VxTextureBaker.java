@@ -24,7 +24,7 @@ import java.nio.IntBuffer;
  * This class handles the conversion from glTF-standard images (split channels) into the
  * specific packed formats required by the render pipeline (e.g., LabPBR Specular maps).
  * It utilizes OpenGL Framebuffers (FBO) and "Vertex-Pulling" shaders to perform these
- * operations entirely in VRAM, avoiding expensive CPU-side pixel iteration.
+ * operations entirely in VRAM.
  *
  * @author xI-Mx-Ix
  */
@@ -44,6 +44,7 @@ public final class VxTextureBaker {
      *     <li>Uploading raw source images to temporary OpenGL textures.</li>
      *     <li>Creating a Framebuffer with two Color Attachments (Albedo, Specular).</li>
      *     <li>Executing a full-screen shader pass (using VertexID generation).</li>
+     *     <li>Generating Mipmaps for the resulting textures.</li>
      *     <li>Storing the resulting texture IDs in the material object.</li>
      *     <li>Cleaning up temporary resources (source textures, FBO).</li>
      * </ol>
@@ -85,6 +86,7 @@ public final class VxTextureBaker {
         int tempEmissiveId = (emissiveImg != null) ? VxTextureLoader.uploadTexture(emissiveImg) : 0;
 
         // 3. Create Target Textures (Empty containers)
+        // These are configured with MIPMAP_LINEAR to prevent black textures in standard pipelines
         int bakedAlbedoId = createEmptyTexture(width, height);
         int bakedSpecularId = createEmptyTexture(width, height);
 
@@ -158,17 +160,27 @@ public final class VxTextureBaker {
             GL11.glEnable(GL11.GL_DEPTH_TEST);
         }
 
-        // 8. Assign Results to Material
+        // 8. Generate Mipmaps for the baked results
+        // This is crucial: without this, the textures may appear black if the sampler expects mipmaps.
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, bakedAlbedoId);
+        GL30.glGenerateMipmap(GL11.GL_TEXTURE_2D);
+
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, bakedSpecularId);
+        GL30.glGenerateMipmap(GL11.GL_TEXTURE_2D);
+
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+
+        // 9. Assign Results to Material
         material.albedoMapGlId = bakedAlbedoId;
         material.specularMapGlId = bakedSpecularId;
 
-        // 9. Cleanup Temporary Resources
+        // 10. Cleanup Temporary Resources
         cleanup(fboId, tempAlbedoId, tempMrId, tempOccId, tempEmissiveId);
     }
 
     /**
      * Helper to allocate an empty RGBA8 texture on the GPU.
-     * Uses Linear filtering.
+     * Uses Linear Mipmap filtering to ensure compatibility.
      *
      * @param w Width in pixels.
      * @param h Height in pixels.
@@ -179,8 +191,11 @@ public final class VxTextureBaker {
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, id);
         // Null buffer allocates storage without data
         GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA8, w, h, 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, (ByteBuffer) null);
-        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
+
+        // Use mipmap filtering to prevent black textures on samplers that expect it
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR_MIPMAP_LINEAR);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
+
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
         return id;
     }
@@ -214,10 +229,6 @@ public final class VxTextureBaker {
 
     /**
      * Triggers the vertex shader to generate a full-screen triangle.
-     * <p>
-     * This method relies on the "Vertex ID" trick. It binds an empty VAO
-     * (required by Core Profile) and issues a draw call for 3 vertices.
-     * The shader calculates the coordinates, so no VBO upload is needed.
      */
     private static void renderFullscreenTriangle() {
         // Core Profile requires a VAO to be bound, even if it's empty/unused.

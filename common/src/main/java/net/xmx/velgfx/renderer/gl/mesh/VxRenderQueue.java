@@ -16,6 +16,7 @@ import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.VxGlState;
 import net.xmx.velgfx.renderer.gl.VxIndexBuffer;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
+import net.xmx.velgfx.renderer.gl.shader.impl.VxVanillaExtendedShader;
 import net.xmx.velgfx.renderer.gl.state.VxBlendMode;
 import net.xmx.velgfx.renderer.gl.state.VxRenderType;
 import net.xmx.velgfx.renderer.util.VxShaderDetector;
@@ -151,6 +152,12 @@ public class VxRenderQueue {
      * Scratch matrix for combined Model-View transformation.
      */
     private static final Matrix4f AUX_MODEL_VIEW = new Matrix4f();
+
+    /**
+     * Scratch matrix for calculating the inverse of the Model-View matrix.
+     * Required for generating the correct Normal Matrix.
+     */
+    private static final Matrix4f AUX_INVERSE_VIEW = new Matrix4f();
 
     /**
      * Scratch matrix for View-Normal transformation.
@@ -326,7 +333,7 @@ public class VxRenderQueue {
     public void flushOpaque(Matrix4f viewMatrix, Matrix4f projectionMatrix) {
         if (opaqueIndices.isEmpty() && cutoutIndices.isEmpty()) return;
         // The last parameter is null because sorting is not required for opaque objects
-        flushInternal(viewMatrix, projectionMatrix, false, null);
+        flushInternal(viewMatrix, projectionMatrix, false);
     }
 
     /**
@@ -354,7 +361,7 @@ public class VxRenderQueue {
             return Float.compare(distSq2, distSq1);
         });
 
-        flushInternal(viewMatrix, projectionMatrix, true, null);
+        flushInternal(viewMatrix, projectionMatrix, true);
     }
 
     /**
@@ -364,9 +371,8 @@ public class VxRenderQueue {
      * @param viewMatrix        The view matrix.
      * @param projectionMatrix  The projection matrix.
      * @param renderTranslucent True if we are currently rendering the transparent pass.
-     * @param cameraPos         Camera position (currently unused in this internal method, but kept for signature consistency).
      */
-    private void flushInternal(Matrix4f viewMatrix, Matrix4f projectionMatrix, boolean renderTranslucent, Vector3f cameraPos) {
+    private void flushInternal(Matrix4f viewMatrix, Matrix4f projectionMatrix, boolean renderTranslucent) {
         RenderSystem.assertOnRenderThread();
 
         // Save the current GL state (VAO bindings, buffer bindings) so we can restore it later.
@@ -377,7 +383,7 @@ public class VxRenderQueue {
             // We need this to rotate the normal vectors from World Space into View Space.
             viewMatrix.get3x3(VIEW_ROTATION);
 
-            // Check if a Shaderpack (Iris/Optifine) is active and branch accordingly.
+            // Check if a Shaderpack is active and branch accordingly.
             if (VxShaderDetector.isShaderpackActive()) {
                 renderBatchShaderpack(viewMatrix, projectionMatrix, renderTranslucent);
             } else {
@@ -390,137 +396,190 @@ public class VxRenderQueue {
     }
 
     /**
-     * Handles rendering for the standard Minecraft pipeline (Vanilla).
-     * It manages shader switching between "Solid", "Cutout", and "Translucent".
+     * Executes the rendering pipeline for the Vanilla Minecraft environment using a custom extended shader.
+     * <p>
+     * This method orchestrates the drawing of all batched meshes. It utilizes a custom shader program
+     * {@link VxVanillaExtendedShader} to provide features such as per-pixel lighting, normal mapping,
+     * and emissive textures, while strictly adhering to Vanilla's fog and lighting calculations.
+     * <p>
+     * <b>State Management:</b>
+     * To ensure seamless integration with the Minecraft rendering engine, this method isolates its
+     * OpenGL state changes. It captures the texture bindings of the critical texture units (0-3)
+     * before execution and restores them immediately after. This prevents "state bleeding" where
+     * custom texture bindings might persist and corrupt subsequent render passes (e.g., items held
+     * in hand or particle effects).
      *
-     * @param viewMatrix        The view matrix.
-     * @param projectionMatrix  The projection matrix.
-     * @param renderTranslucent Whether this pass is for translucent objects.
+     * @param viewMatrix        The current camera view matrix (World Space to Camera Space).
+     * @param projectionMatrix  The current projection matrix (Camera Space to Clip Space).
+     * @param renderTranslucent {@code true} if this pass is rendering translucent geometry (sorted back-to-front);
+     *                          {@code false} for opaque and cutout geometry (sorted front-to-back or unsorted).
      */
     private void renderBatchVanilla(Matrix4f viewMatrix, Matrix4f projectionMatrix, boolean renderTranslucent) {
-        List<Integer> bucket = null;
-        ShaderInstance shader;
+        // 1. Snapshot the current OpenGL texture state.
+        // We preserve the state of Texture Units 0-3 to restore them later.
+        // This ensures that whatever textures Vanilla had bound (e.g., the block atlas or lightmap)
+        // remain technically "bound" from the perspective of the engine's state cache after we return.
+        int[] savedTextureState = captureTextureState();
 
-        if (renderTranslucent) {
-            // Setup for Translucent pass
-            bucket = translucentIndices;
+        // 2. Prepare the custom shader program.
+        VxVanillaExtendedShader shader = VelGFX.getShaderManager().getVanillaExtendedShader();
+        shader.bind();
 
-            RenderSystem.enableBlend();
-            RenderSystem.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-            // Disable writing to depth buffer for transparent objects to prevent self-occlusion artifacts
-            RenderSystem.depthMask(false);
+        // 3. Upload standard environment uniforms.
+        // These uniforms match the standard Minecraft inputs for fog, color modulation, and matrix transformation.
+        shader.setUniform("ProjMat", projectionMatrix);
+        shader.setUniform("ColorModulator", RenderSystem.getShaderColor());
+        shader.setUniform("FogStart", RenderSystem.getShaderFogStart());
+        shader.setUniform("FogEnd", RenderSystem.getShaderFogEnd());
+        shader.setUniform("FogColor", RenderSystem.getShaderFogColor());
+        shader.setUniform("FogShape", RenderSystem.getShaderFogShape().getIndex());
 
-            shader = setupCommonRenderState(projectionMatrix, GameRenderer.getRendertypeEntityTranslucentShader());
-        } else {
-            // Setup for Opaque pass
-            RenderSystem.disableBlend();
-            // Enable writing to depth buffer
-            RenderSystem.depthMask(true);
+        // 4. Upload Lighting Directions.
+        // We provide the standard directional light vectors (Sky and Block/Directional) to the shader.
+        shader.setUniform("Light0_Direction", VANILLA_LIGHT0);
+        shader.setUniform("Light1_Direction", VANILLA_LIGHT1);
 
-            shader = setupCommonRenderState(projectionMatrix, GameRenderer.getRendertypeEntitySolidShader());
-        }
-
-        if (shader == null) return;
-
-        // Bind the lightmap texture (Texture 2 in Minecraft)
-        Minecraft.getInstance().gameRenderer.lightTexture().turnOnLightLayer();
-
-        // Assign all standard samplers
-        for (int i = 0; i < 12; ++i) {
-            shader.setSampler("Sampler" + i, RenderSystem.getShaderTexture(i));
-        }
-
-        // Set the default overlay color (white/neutral)
+        // Reset the generic vertex color attribute to pure white (1.0) to prevent unwanted tinting.
         GL30.glVertexAttrib4f(1, 1.0f, 1.0f, 1.0f, 1.0f);
 
+        // 5. Configure Global Textures.
+        // Note: We deliberately fetch the specific texture IDs from RenderSystem rather than using
+        // the captured state. This guarantees that our shader receives the valid, currently active
+        // Lightmap and Overlay textures, ensuring correct lighting and damage tints even if the
+        // raw OpenGL state was temporarily empty (0).
+
+        // Unit 1: Overlay Texture (Used for the red damage tint / flash).
+        GL13.glActiveTexture(GL13.GL_TEXTURE1);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, RenderSystem.getShaderTexture(1));
+        shader.setUniform("Sampler1", 1);
+
+        // Unit 2: Lightmap Texture (Contains Sky Light and Block Light data).
+        // Ensure the light layer is active in the engine before binding.
+        Minecraft.getInstance().gameRenderer.lightTexture().turnOnLightLayer();
+        GL13.glActiveTexture(GL13.GL_TEXTURE2);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, RenderSystem.getShaderTexture(2));
+        shader.setUniform("Sampler2", 2);
+
+        // Unit 3: Specular/Emissive Map (Specific to our pipeline).
+        // We bind 0 initially to ensure no stale data is sampled if a material lacks this map.
+        GL13.glActiveTexture(GL13.GL_TEXTURE3);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+        shader.setUniform("Sampler3", 3);
+
+        // Unit 0: Albedo/Base Color.
+        // This will be rebound per-material in the inner loop.
+        GL13.glActiveTexture(GL13.GL_TEXTURE0);
+        shader.setUniform("Sampler0", 0);
+
+        // 6. Execute Render Passes.
         if (!renderTranslucent) {
-            // 1. Render solids
+            // Pass A: Opaque Geometry.
+            // These objects write to the depth buffer and do not support transparency.
+            shader.setUniform("AlphaCutoff", 0.0f);
             renderBucketVanilla(opaqueIndices, shader, viewMatrix, VxRenderType.OPAQUE);
 
-            // 2. Render cutouts
+            // Pass B: Cutout Geometry.
+            // These objects discard fragments below the alpha threshold (e.g., foliage, grates).
             if (!cutoutIndices.isEmpty()) {
-                // We must switch to the cutout shader because it has the "discard" instruction for alpha testing
-                ShaderInstance cutoutShader = GameRenderer.getRendertypeEntityCutoutShader();
-                if (cutoutShader != null) {
-                    RenderSystem.setShader(() -> cutoutShader);
-                    setupShaderUniforms(cutoutShader, projectionMatrix);
-                    renderBucketVanilla(cutoutIndices, cutoutShader, viewMatrix, VxRenderType.CUTOUT);
-                }
+                shader.setUniform("AlphaCutoff", 0.5f);
+                renderBucketVanilla(cutoutIndices, shader, viewMatrix, VxRenderType.CUTOUT);
             }
         } else {
-            // 3. Render translucent
-            renderBucketVanilla(bucket, shader, viewMatrix, VxRenderType.TRANSLUCENT);
+            // Pass C: Translucent Geometry.
+            // Enables blending for semi-transparent objects (e.g., stained glass, water).
+            // Depth writing is disabled to prevent occlusion artifacts within the transparency layer.
+            RenderSystem.enableBlend();
+            RenderSystem.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            RenderSystem.depthMask(false);
+
+            shader.setUniform("AlphaCutoff", 0.0f);
+            renderBucketVanilla(translucentIndices, shader, viewMatrix, VxRenderType.TRANSLUCENT);
+
+            // Restore depth writing and disable blending after the pass.
+            RenderSystem.depthMask(true);
+            RenderSystem.disableBlend();
         }
 
-        // Restore default GL states
-        RenderSystem.depthMask(true);
-        RenderSystem.disableBlend();
-        shader.clear();
+        shader.unbind();
+
+        // 7. Restore State.
+        // Revert the OpenGL texture units to the state captured at the beginning of the method.
+        restoreTextureState(savedTextureState);
     }
 
     /**
-     * The inner loop that processes a list of indices for Vanilla rendering.
-     * This method handles the complex math required to make custom meshes work with vanilla lighting.
+     * Processes a specific bucket of meshes and issues the OpenGL draw calls.
+     * <p>
+     * This inner loop is responsible for:
+     * <ul>
+     *     <li>Calculating the Model-View Matrix for vertex positioning.</li>
+     *     <li>Calculating the Normal Matrix for correct lighting orientation.</li>
+     *     <li>Transforming light vectors into View Space.</li>
+     *     <li>Binding material-specific textures (Albedo, Normal, Specular).</li>
+     *     <li>Managing render state flags (Culling, Blending).</li>
+     * </ul>
      *
-     * @param bucket      The list of object indices to render.
-     * @param shader      The active shader instance.
-     * @param viewMatrix  The camera view matrix.
-     * @param currentType The render type we are currently processing (used for filtering).
+     * @param bucket      The list of indices pointing to the meshes within the SoA storage.
+     * @param shader      The active shader program instance.
+     * @param viewMatrix  The camera's view matrix.
+     * @param currentType The render type currently being processed (used to filter draw commands).
      */
-    private void renderBucketVanilla(List<Integer> bucket, ShaderInstance shader, Matrix4f viewMatrix, VxRenderType currentType) {
+    private void renderBucketVanilla(List<Integer> bucket, VxVanillaExtendedShader shader, Matrix4f viewMatrix, VxRenderType currentType) {
         boolean isCullingEnabled = true;
+
+        // 1. Prepare View Space rotation.
+        // Used to rotate direction vectors without applying translation.
+        AUX_MODEL_VIEW.set(viewMatrix);
+        AUX_MODEL_VIEW.setTranslation(0, 0, 0);
+
+        // 2. Transform Light Directions.
+        // The shader expects light vectors in View Space to perform dot-product lighting against View Space normals.
+        AUX_LIGHT0.set(VANILLA_LIGHT0);
+        AUX_MODEL_VIEW.transformDirection(AUX_LIGHT0);
+        shader.setUniform("Light0_Direction", AUX_LIGHT0);
+
+        AUX_LIGHT1.set(VANILLA_LIGHT1);
+        AUX_MODEL_VIEW.transformDirection(AUX_LIGHT1);
+        shader.setUniform("Light1_Direction", AUX_LIGHT1);
 
         for (Integer i : bucket) {
             IVxRenderableMesh mesh = this.meshes[i];
             Matrix4f modelMat = this.modelMatrices[i];
-            Matrix3f normalMat = this.normalMatrices[i];
             int packedLight = this.packedLights[i];
 
-            // -- Math Calculation --
-
-            // 1. Calculate ModelView Matrix: Transforms Local -> View Space
+            // 3. Compute ModelView Matrix.
+            // Combines the Camera View and Object Model matrices.
             AUX_MODEL_VIEW.set(viewMatrix).mul(modelMat);
+            shader.setUniform("ModelViewMat", AUX_MODEL_VIEW);
 
-            // 2. Calculate Normal Matrix: Transforms Local Normals -> View Space Normals
-            AUX_NORMAL_VIEW.set(VIEW_ROTATION).mul(normalMat);
+            // 4. Compute Normal Matrix.
+            // Required to correctly transform normal vectors, handling non-uniform scaling.
+            // Calculation: Transpose(Inverse(ModelView)).
+            AUX_INVERSE_VIEW.set(AUX_MODEL_VIEW).invert().transpose();
+            AUX_INVERSE_VIEW.get3x3(AUX_NORMAL_MAT);
 
-            // 3. Lighting Correction:
-            // The vanilla shader expects light directions to be pre-transformed by the inverse
-            // of the normal matrix. We compute this by transposing the normal-view matrix
-            // and then transforming the world-space light directions through it.
-            AUX_NORMAL_MAT.set(AUX_NORMAL_VIEW).transpose();
-            AUX_LIGHT0.set(VANILLA_LIGHT0).mul(AUX_NORMAL_MAT);
-            AUX_LIGHT1.set(VANILLA_LIGHT1).mul(AUX_NORMAL_MAT);
+            MATRIX_BUFFER_9.clear();
+            AUX_NORMAL_MAT.get(MATRIX_BUFFER_9);
+            GL20.glUniformMatrix3fv(shader.getUniformLocation("NormalMat"), false, MATRIX_BUFFER_9);
 
-            // Update uniforms
-            if (shader.LIGHT0_DIRECTION != null) shader.LIGHT0_DIRECTION.set(AUX_LIGHT0);
-            if (shader.LIGHT1_DIRECTION != null) shader.LIGHT1_DIRECTION.set(AUX_LIGHT1);
-            if (shader.MODEL_VIEW_MATRIX != null) shader.MODEL_VIEW_MATRIX.set(AUX_MODEL_VIEW);
-
-            // Send the 3x3 Normal Matrix
-            int normalMatrixLocation = Uniform.glGetUniformLocation(shader.getId(), "NormalMat");
-            if (normalMatrixLocation != -1) {
-                MATRIX_BUFFER_9.clear();
-                AUX_NORMAL_VIEW.get(MATRIX_BUFFER_9);
-                RenderSystem.glUniformMatrix3(normalMatrixLocation, false, MATRIX_BUFFER_9);
-            }
-
-            // Prepare the mesh VAO
+            // 5. Bind Mesh Geometry.
             mesh.setupVaoState();
 
-            // Pass the lightmap coordinates. In vanilla, this is often passed as a vertex attribute (UV2).
+            // 6. Set Lightmap Coordinates.
+            // Passed as a generic vertex attribute (Location 4) to correspond with standard shader inputs.
             GL30.glDisableVertexAttribArray(AT_UV2);
             GL30.glVertexAttribI2i(AT_UV2, packedLight & 0xFFFF, packedLight >> 16);
 
-            // Process draw commands
+            // 7. Process Draw Commands.
             for (VxDrawCommand rawCommand : mesh.getDrawCommands()) {
                 VxDrawCommand command = mesh.resolveCommand(rawCommand);
                 VxMaterial mat = command.material;
 
-                // Skip parts of the mesh that don't match the current render pass
+                // Filter commands by the current pass type.
                 if (mat.renderType != currentType) continue;
 
-                // Handle Face Culling (Double-sided vs Single-sided)
+                // Toggle Face Culling.
+                // Disables culling for double-sided materials (e.g., foliage, flowing cloth).
                 boolean shouldCull = !mat.doubleSided;
                 if (shouldCull != isCullingEnabled) {
                     if (shouldCull) RenderSystem.enableCull();
@@ -528,26 +587,31 @@ public class VxRenderQueue {
                     isCullingEnabled = shouldCull;
                 }
 
-                // Apply material blend mode
+                // Update Alpha Cutoff for specific materials in the Cutout pass.
+                if (currentType == VxRenderType.CUTOUT) {
+                    shader.setUniform("AlphaCutoff", mat.alphaCutoff);
+                }
+
                 mat.blendMode.apply();
 
-                // Prepare sampler uniform
-                shader.setSampler("Sampler0", mat.albedoMapGlId);
+                // Bind Albedo Texture (Unit 0).
+                GL13.glActiveTexture(GL13.GL_TEXTURE0);
+                GL11.glBindTexture(GL11.GL_TEXTURE_2D, mat.albedoMapGlId != -1 ? mat.albedoMapGlId : 0);
 
-                // Apply color tint
-                if (shader.COLOR_MODULATOR != null) {
-                    shader.COLOR_MODULATOR.set(mat.baseColorFactor);
+                // Bind Specular/Emissive Texture (Unit 3).
+                GL13.glActiveTexture(GL13.GL_TEXTURE3);
+                if (mat.specularMapGlId != -1) {
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, mat.specularMapGlId);
+                    shader.setUniform("UseEmissive", 1.0f);
+                } else {
+                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+                    shader.setUniform("UseEmissive", 0.0f);
                 }
 
-                // Apply shader state
-                shader.apply();
+                // Reset active unit to 0 for the draw call.
+                GL13.glActiveTexture(GL13.GL_TEXTURE0);
 
-                if (mat.albedoMapGlId != -1) {
-                    GL13.glActiveTexture(GL13.GL_TEXTURE0);
-                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, mat.albedoMapGlId);
-                }
-
-                // Draw Elements
+                // Issue Draw Call.
                 GL32.glDrawElementsBaseVertex(
                         GL30.GL_TRIANGLES,
                         command.indexCount,
@@ -557,56 +621,61 @@ public class VxRenderQueue {
                 );
             }
 
-            // Cleanup attribute
+            // Restore attribute state for the next mesh.
             GL30.glEnableVertexAttribArray(AT_UV2);
         }
 
-        // Reset culling state if it was changed
+        // Restore Culling State if modified.
         if (!isCullingEnabled) {
             RenderSystem.enableCull();
         }
     }
 
     /**
-     * Handles rendering when an external shader pack is active.
+     * Executes the rendering pipeline when an external shader pack is active.
      * <p>
-     * This method inspects the current OpenGL shader program to determine where specific
-     * textures should be bound. It looks for specific uniform names ("normals", "specular")
-     * and retrieves their integer values to determine the correct Texture Unit offset.
+     * This method adapts the rendering logic to work with unknown shader programs. It dynamically
+     * discovers the uniform locations and texture units expected by the active shader pack to ensure
+     * that Normal Maps and Specular Maps are bound to the correct slots.
+     * <p>
+     * Like the Vanilla path, it employs strict state preservation to avoid conflicts with the
+     * complex state management of shader mods.
      *
-     * @param viewMatrix        The view matrix (World -> Camera).
-     * @param projectionMatrix  The projection matrix (Camera -> Clip).
-     * @param renderTranslucent Whether this pass is for translucent objects.
+     * @param viewMatrix        The current camera view matrix.
+     * @param projectionMatrix  The current projection matrix.
+     * @param renderTranslucent {@code true} if rendering the translucent pass; {@code false} otherwise.
      */
     private void renderBatchShaderpack(Matrix4f viewMatrix, Matrix4f projectionMatrix, boolean renderTranslucent) {
+        // 1. Snapshot the current OpenGL texture state.
+        int[] savedTextureState = captureTextureState();
+
+        // 2. Initialize the standard entity shader state.
+        // We use the vanilla entity shader setup as a baseline, which external shader packs hook into.
         ShaderInstance shader = setupCommonRenderState(projectionMatrix, GameRenderer.getRendertypeEntitySolidShader());
         if (shader == null) return;
 
-        // Reset standard samplers (Unit 0-11)
+        // Reset standard texture samplers (Units 0-11) to default defaults.
         for (int i = 0; i < 12; ++i) {
             shader.setSampler("Sampler" + i, RenderSystem.getShaderTexture(i));
         }
         shader.apply();
 
-        // Reset base overlay color
         GL30.glVertexAttrib4f(1, 1.0f, 1.0f, 1.0f, 1.0f);
 
-        // Dynamic Shader Analysis
-        // We query the shader program directly to find out which Texture Unit
-        // corresponds to the 'normals' and 'specular' uniforms.
+        // 3. Dynamic Shader Analysis.
+        // We query the active shader program to find the texture units assigned to "normals" and "specular".
+        // This is necessary because shader packs can arbitrarily assign these slots.
         int currentProgramId = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
-
         if (currentProgramId != this.cachedProgramId) {
             this.cachedProgramId = currentProgramId;
 
-            // 1. Find Uniform Locations by Name
             int locNormals = GL20.glGetUniformLocation(currentProgramId, "normals");
             int locSpecular = GL20.glGetUniformLocation(currentProgramId, "specular");
 
             this.texUnitNormal = (locNormals != -1) ? GL20.glGetUniformi(currentProgramId, locNormals) : -1;
             this.texUnitSpecular = (locSpecular != -1) ? GL20.glGetUniformi(currentProgramId, locSpecular) : -1;
 
-            // 3. Find Normal Matrix Uniform
+            // Locate the Normal Matrix uniform (handling various naming conventions).
             this.locNormalMat = Uniform.glGetUniformLocation(currentProgramId, "iris_NormalMat");
             if (this.locNormalMat == -1) {
                 this.locNormalMat = Uniform.glGetUniformLocation(currentProgramId, "NormalMat");
@@ -616,18 +685,16 @@ public class VxRenderQueue {
             }
         }
 
+        // 4. Execute Render Passes.
         if (renderTranslucent) {
-            // Translucent pass: Enable blending and disable depth writing
             RenderSystem.enableBlend();
             RenderSystem.depthMask(false);
 
             renderBucketShaderpack(translucentIndices, shader, viewMatrix, VxRenderType.TRANSLUCENT);
 
-            // Restore state
             RenderSystem.depthMask(true);
             RenderSystem.disableBlend();
         } else {
-            // Opaque / G-Buffer pass
             RenderSystem.disableBlend();
             RenderSystem.depthMask(true);
 
@@ -636,6 +703,19 @@ public class VxRenderQueue {
         }
 
         shader.clear();
+
+        // 5. Cleanup Shaderpack Units.
+        if (this.texUnitNormal != -1) {
+            GL13.glActiveTexture(GL13.GL_TEXTURE0 + this.texUnitNormal);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+        }
+        if (this.texUnitSpecular != -1) {
+            GL13.glActiveTexture(GL13.GL_TEXTURE0 + this.texUnitSpecular);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+        }
+
+        // 6. Restore State.
+        restoreTextureState(savedTextureState);
     }
 
     /**
@@ -799,5 +879,58 @@ public class VxRenderQueue {
         }
 
         RenderSystem.setupShaderLights(shader);
+    }
+
+    /**
+     * Captures the current OpenGL active texture unit and the 2D texture bindings
+     * for units 0 through 3.
+     * <p>
+     * This is used to create a snapshot of the GPU state before custom rendering operations
+     * modify bindings. Restoring this state prevents synchronization issues with the
+     * {@link RenderSystem} cache.
+     *
+     * @return An array containing the saved state (Active Unit + 4 Texture IDs).
+     */
+    private int[] captureTextureState() {
+        int[] state = new int[5];
+        state[0] = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+
+        GL13.glActiveTexture(GL13.GL_TEXTURE0);
+        state[1] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+
+        GL13.glActiveTexture(GL13.GL_TEXTURE1);
+        state[2] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+
+        GL13.glActiveTexture(GL13.GL_TEXTURE2);
+        state[3] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+
+        GL13.glActiveTexture(GL13.GL_TEXTURE3);
+        state[4] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+
+        return state;
+    }
+
+    /**
+     * Restores the OpenGL texture state from the provided state array.
+     * <p>
+     * This resets the texture bindings for units 0-3 and the active texture selector
+     * to the values they held when {@link #captureTextureState()} was called.
+     *
+     * @param state The state array previously returned by {@link #captureTextureState()}.
+     */
+    private void restoreTextureState(int[] state) {
+        GL13.glActiveTexture(GL13.GL_TEXTURE3);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, state[4]);
+
+        GL13.glActiveTexture(GL13.GL_TEXTURE2);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, state[3]);
+
+        GL13.glActiveTexture(GL13.GL_TEXTURE1);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, state[2]);
+
+        GL13.glActiveTexture(GL13.GL_TEXTURE0);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, state[1]);
+
+        GL13.glActiveTexture(state[0]);
     }
 }
