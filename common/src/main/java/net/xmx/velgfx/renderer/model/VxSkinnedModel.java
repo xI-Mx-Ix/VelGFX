@@ -14,6 +14,7 @@ import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaMesh;
 import net.xmx.velgfx.renderer.gl.mesh.arena.VxMemorySegment;
 import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxSkinnedResultMesh;
 import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxSkinningArena;
+import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxSkinningBatcher;
 import net.xmx.velgfx.renderer.gl.shader.impl.VxSkinningShader;
 import net.xmx.velgfx.renderer.model.animation.VxAnimation;
 import net.xmx.velgfx.renderer.model.morph.VxMorphController;
@@ -155,7 +156,10 @@ public class VxSkinnedModel extends VxModel {
     }
 
     /**
-     * Updates the animation state and executes the GPU skinning pass.
+     * Updates the animation state and queues the GPU skinning task.
+     * <p>
+     * This advances the animation time, updates the bone matrices, and registers this model
+     * with the {@link VxSkinningBatcher} for processing later in the frame.
      *
      * @param dt The time elapsed since the last frame in seconds.
      */
@@ -167,7 +171,6 @@ public class VxSkinnedModel extends VxModel {
         super.update(dt);
 
         // 2. Update Morph Controller State
-        // Sorts active targets by weight and prepares data for the shader.
         if (morphController != null) {
             morphController.update();
         }
@@ -175,75 +178,53 @@ public class VxSkinnedModel extends VxModel {
         // 3. Flatten bone matrices for upload
         skeleton.updateBoneMatrices(boneMatrices);
 
-        // 4. GPU Skinning Pass (Transform Feedback)
-        performSkinningPass();
+        // 4. Queue for Batch Processing
+        // Instead of executing GL calls immediately, we wait for the batch flush.
+        VxSkinningBatcher.getInstance().queue(this);
     }
 
     /**
-     * Executes the actual compute pass on the GPU.
+     * Executes the draw command for the Compute Pass (Transform Feedback).
      * <p>
-     * <b>Process:</b>
-     * <ol>
-     *     <li>Binds the Skinning Shader.</li>
-     *     <li>Uploads Bone Matrices and Active Morph Targets.</li>
-     *     <li>Binds the Source VAO (Input) and Destination TFO (Output).</li>
-     *     <li>Dispatches a {@code glDrawArrays(GL_POINTS)} command to process vertices linearly.</li>
-     * </ol>
+     * <b>Internal Use Only:</b> This method is called by the {@link VxSkinningBatcher}.
+     * It assumes that the Skinning Shader, Source VAO, and Rasterizer Discard state
+     * are already configured by the batcher.
+     *
+     * @param shader The active skinning shader instance.
      */
-    private void performSkinningPass() {
-        VxSkinningArena arena = VxSkinningArena.getInstance();
-        VxSkinningShader shader = VelGFX.getShaderManager().getSkinningShader();
+    public void dispatchCompute(VxSkinningShader shader) {
+        // 1. Upload Uniforms specific to this model instance
+        shader.loadJointTransforms(boneMatrices);
 
-        try {
-            shader.bind();
-            shader.loadJointTransforms(boneMatrices);
-
-            // Determine the base transformation for unskinned geometry.
-            VxNode modelRoot = skeleton.getRootNode();
-            if (!modelRoot.getChildren().isEmpty()) {
-                modelRoot = modelRoot.getChildren().get(0);
-            }
-            shader.loadBaseTransform(modelRoot.getGlobalTransform());
-
-            // Disable rasterization because we are only processing vertices, not drawing pixels.
-            GL11.glEnable(GL30.GL_RASTERIZER_DISCARD);
-
-            // 1. Bind Source Data (Bind Pose from Static Arena)
-            sourceMesh.setupVaoState();
-
-            // 2. Upload Morph State (if applicable)
-            if (morphController != null) {
-                int baseVertex = sourceMesh.resolveCommand(
-                        new VxDrawCommand(null, 0, 0, 0)
-                ).baseVertex;
-
-                morphController.applyToShader(shader, baseVertex);
-            } else {
-                shader.loadMorphState(null, null, 0, 0);
-            }
-
-            // 3. Bind Output Data (Specific Segment in Giant Buffer)
-            arena.bindForFeedback(resultSegment);
-
-            // 4. Begin Transform Feedback
-            GL40.glBeginTransformFeedback(GL11.GL_POINTS);
-
-            int totalVertexCount = (int) (sourceMesh.getVertexSegment().size / VxSkinnedVertexLayout.STRIDE);
-            int firstVertex = sourceMesh.resolveCommand(
-                    new VxDrawCommand(null, 0, 0, 0)
-            ).baseVertex;
-
-            GL11.glDrawArrays(GL11.GL_POINTS, firstVertex, totalVertexCount);
-
-            GL40.glEndTransformFeedback();
-            arena.unbindFeedback();
-
-        } finally {
-            // Restore State for the main render pass
-            GL11.glDisable(GL30.GL_RASTERIZER_DISCARD);
-            shader.unbind();
-            RenderSystem.activeTexture(GL13.GL_TEXTURE0);
+        // Determine the base transformation for unskinned geometry (Root Node).
+        VxNode modelRoot = skeleton.getRootNode();
+        if (!modelRoot.getChildren().isEmpty()) {
+            modelRoot = modelRoot.getChildren().get(0);
         }
+        shader.loadBaseTransform(modelRoot.getGlobalTransform());
+
+        // Calculate the base vertex index for the Source Mesh
+        int baseVertex = sourceMesh.resolveCommand(new VxDrawCommand(null, 0, 0, 0)).baseVertex;
+
+        // 2. Upload Morph State
+        if (morphController != null) {
+            morphController.applyToShader(shader, baseVertex);
+        } else {
+            shader.loadMorphState(null, null, 0, 0);
+        }
+
+        // 3. Bind Output Buffer Range (Transform Feedback Target)
+        // This directs the GPU to write the transformed vertices to our specific segment in the result arena.
+        VxSkinningArena.getInstance().bindForFeedback(resultSegment);
+
+        // 4. Dispatch Points
+        // We render GL_POINTS to process vertices 1:1 without assembling primitives.
+        GL40.glBeginTransformFeedback(GL11.GL_POINTS);
+
+        int totalVertexCount = (int) (sourceMesh.getVertexSegment().size / VxSkinnedVertexLayout.STRIDE);
+        GL11.glDrawArrays(GL11.GL_POINTS, baseVertex, totalVertexCount);
+
+        GL40.glEndTransformFeedback();
     }
 
     /**
