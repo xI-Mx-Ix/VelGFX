@@ -1,5 +1,10 @@
 #version 150
 
+/**
+ * Standard Vertex Shader.
+ * Transforms vertices to View/Clip space and prepares data for the fragment shader.
+ */
+
 // --- Attributes ---
 in vec3 Position;
 in vec4 Color;
@@ -26,13 +31,6 @@ flat out ivec2 v_OverlayUV;
 // normalized lightmap coordinates (0.0 - 1.0)
 out vec2 v_LightMapUV;
 
-/**
- * Custom Vanilla Extended Vertex Shader.
- * <p>
- * This shader prepares data for per-pixel lighting in the fragment stage.
- * Unlike vanilla, lighting is not baked into the vertex color here,
- * but passed as vectors to allow for high-quality normal mapping and smooth lighting.
- */
 void main() {
     // 1. Transform Position to View Space
     // This represents the position relative to the camera.
@@ -55,7 +53,6 @@ void main() {
     // 5. Calculate Lightmap Coordinates
     // Minecraft passes light values as shorts (0 to 240).
     // We normalize this to the 0.0 - 1.0 range expected by texture().
-    // Formula: value / 256.0
     v_LightMapUV = vec2(UV2) / 256.0;
 
     // 6. Final Clip Space Position
