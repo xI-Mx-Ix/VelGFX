@@ -3,6 +3,9 @@
 /**
  * Standard Fragment Shader.
  * Imports lighting and fog modules to assemble the final pixel color.
+ *
+ * This shader includes logic for "Over-Brightening" emissive textures
+ * to create a glowing/blinding effect.
  */
 
 // --- Imports ---
@@ -33,6 +36,11 @@ flat in ivec2 v_OverlayUV; // Non-interpolated overlay indices
 in vec2 v_LightMapUV;      // Normalized lightmap coordinates
 
 out vec4 fragColor;
+
+// --- Constants ---
+// Controls how much brighter than 1.0 the emissive parts should be.
+// Values > 1.0 create a "glare" or "blinding" effect by saturating the color channels.
+#define EMISSIVE_GAIN 3.0
 
 /**
  * Main entry point.
@@ -72,18 +80,32 @@ vec3 environmentalLight = lightMapColor.rgb * dirLightFactor;
 // 4. Emissive / Specular Logic
 float emissiveStrength = 0.0;
 if (UseEmissive > 0.5) {
-// Alpha channel of specular map controls emissiveness
+// Alpha channel of specular map controls emissiveness.
 emissiveStrength = texture(Sampler3, v_TexCoord0).a;
 }
 
-// Masking Logic:
-// 1.0 emissive strength ignores shadows/environmental light.
-vec3 finalLight = mix(environmentalLight, vec3(1.0), emissiveStrength);
+// Calculate Emissive Light
+// We multiply by EMISSIVE_GAIN to allow the color to exceed 1.0 (over-brightening).
+// This ensures glowing parts look "hot" and blinding, even in bright environments.
+vec3 emissiveLight = vec3(EMISSIVE_GAIN);
+
+// Mix Logic:
+// Interpolate between the environmental light (shadows/sky) and the pure emissive light.
+// As emissiveStrength approaches 1.0, shadows are completely ignored and the color boosts.
+vec3 finalLight = mix(environmentalLight, emissiveLight, emissiveStrength);
 
 // Apply final lighting to the color
 color.rgb *= finalLight;
 
 // 5. Final Fog Application
-// Uses logic imported from vx_fog.glsl
-fragColor = applyFog(color, length(v_PositionView));
+// Calculate the distance from the camera to the fragment.
+float viewDistance = length(v_PositionView);
+
+// Fog Penetration Logic:
+// If a pixel is emissive, we artificially reduce its distance calculation for the fog.
+// This allows the glowing object to "cut through" the fog, remaining visible even far away.
+// Factor 0.8 means fully emissive pixels act as if they are 20% of their real distance.
+float fogDistance = viewDistance * (1.0 - emissiveStrength * 0.8);
+
+fragColor = applyFog(color, fogDistance);
 }
