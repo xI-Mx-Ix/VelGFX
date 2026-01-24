@@ -404,7 +404,7 @@ public class VxRenderQueue {
      * <p>
      * <b>State Management:</b>
      * To ensure seamless integration with the Minecraft rendering engine, this method isolates its
-     * OpenGL state changes. It captures the texture bindings of the critical texture units (0-3)
+     * OpenGL state changes. It captures the texture bindings of the critical texture units (0-4)
      * before execution and restores them immediately after. This prevents "state bleeding" where
      * custom texture bindings might persist and corrupt subsequent render passes (e.g., items held
      * in hand or particle effects).
@@ -416,7 +416,7 @@ public class VxRenderQueue {
      */
     private void renderBatchVanilla(Matrix4f viewMatrix, Matrix4f projectionMatrix, boolean renderTranslucent) {
         // 1. Snapshot the current OpenGL texture state.
-        // We preserve the state of Texture Units 0-3 to restore them later.
+        // We preserve the state of Texture Units 0-4 to restore them later.
         // This ensures that whatever textures Vanilla had bound (e.g., the block atlas or lightmap)
         // remain technically "bound" from the perspective of the engine's state cache after we return.
         int[] savedTextureState = captureTextureState();
@@ -436,6 +436,7 @@ public class VxRenderQueue {
 
         // 4. Upload Lighting Directions.
         // We provide the standard directional light vectors (Sky and Block/Directional) to the shader.
+        // These are used for both the vanilla diffuse fallback and the PBR specular calculations.
         shader.setUniform("Light0_Direction", VANILLA_LIGHT0);
         shader.setUniform("Light1_Direction", VANILLA_LIGHT1);
 
@@ -460,11 +461,13 @@ public class VxRenderQueue {
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, RenderSystem.getShaderTexture(2));
         shader.setUniform("Sampler2", 2);
 
-        // Unit 3: Specular/Emissive Map (Specific to our pipeline).
+        // Unit 3: Specular/Emissive Map.
         // We bind 0 initially to ensure no stale data is sampled if a material lacks this map.
-        GL13.glActiveTexture(GL13.GL_TEXTURE3);
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
         shader.setUniform("Sampler3", 3);
+
+        // Unit 4: Normal Map (Tangent Space).
+        // We bind 0 initially to ensure no stale data is sampled.
+        shader.setUniform("Sampler4", 4);
 
         // Unit 0: Albedo/Base Color.
         // This will be rebound per-material in the inner loop.
@@ -594,19 +597,19 @@ public class VxRenderQueue {
 
                 mat.blendMode.apply();
 
-                // Bind Albedo Texture (Unit 0).
+                // Bind Material Textures
+
+                // Unit 0: Albedo Texture (Base Color)
                 GL13.glActiveTexture(GL13.GL_TEXTURE0);
                 GL11.glBindTexture(GL11.GL_TEXTURE_2D, mat.albedoMapGlId != -1 ? mat.albedoMapGlId : 0);
 
-                // Bind Specular/Emissive Texture (Unit 3).
+                // Unit 3: Specular / LabPBR Texture
                 GL13.glActiveTexture(GL13.GL_TEXTURE3);
-                if (mat.specularMapGlId != -1) {
-                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, mat.specularMapGlId);
-                    shader.setUniform("UseEmissive", 1.0f);
-                } else {
-                    GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
-                    shader.setUniform("UseEmissive", 0.0f);
-                }
+                GL11.glBindTexture(GL11.GL_TEXTURE_2D, mat.specularMapGlId != -1 ? mat.specularMapGlId : 0);
+
+                // Unit 4: Normal Map
+                GL13.glActiveTexture(GL13.GL_TEXTURE4);
+                GL11.glBindTexture(GL11.GL_TEXTURE_2D, mat.normalMapGlId != -1 ? mat.normalMapGlId : 0);
 
                 // Reset active unit to 0 for the draw call.
                 GL13.glActiveTexture(GL13.GL_TEXTURE0);
@@ -883,16 +886,14 @@ public class VxRenderQueue {
 
     /**
      * Captures the current OpenGL active texture unit and the 2D texture bindings
-     * for units 0 through 3.
+     * for units 0 through 4.
      * <p>
-     * This is used to create a snapshot of the GPU state before custom rendering operations
-     * modify bindings. Restoring this state prevents synchronization issues with the
-     * {@link RenderSystem} cache.
+     * Updated to include Unit 4 (Normal Maps) to ensure state integrity.
      *
-     * @return An array containing the saved state (Active Unit + 4 Texture IDs).
+     * @return An array containing the saved state (Active Unit + 5 Texture IDs).
      */
     private int[] captureTextureState() {
-        int[] state = new int[5];
+        int[] state = new int[6];
         state[0] = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
 
         GL13.glActiveTexture(GL13.GL_TEXTURE0);
@@ -907,18 +908,23 @@ public class VxRenderQueue {
         GL13.glActiveTexture(GL13.GL_TEXTURE3);
         state[4] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
 
+        GL13.glActiveTexture(GL13.GL_TEXTURE4);
+        state[5] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+
         return state;
     }
 
     /**
      * Restores the OpenGL texture state from the provided state array.
      * <p>
-     * This resets the texture bindings for units 0-3 and the active texture selector
-     * to the values they held when {@link #captureTextureState()} was called.
+     * Restores bindings for units 0-4.
      *
      * @param state The state array previously returned by {@link #captureTextureState()}.
      */
     private void restoreTextureState(int[] state) {
+        GL13.glActiveTexture(GL13.GL_TEXTURE4);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, state[5]);
+
         GL13.glActiveTexture(GL13.GL_TEXTURE3);
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, state[4]);
 

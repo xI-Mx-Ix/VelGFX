@@ -9,7 +9,7 @@ import net.xmx.velgfx.resources.VxResourceLocation;
 
 /**
  * A unified shader program for rendering entities with per-pixel lighting,
- * vanilla fog, overlay handling, and LabPBR emissive support.
+ * vanilla fog, overlay handling, and LabPBR support (Normal Maps + Specular).
  *
  * @author xI-Mx-Ix
  */
@@ -29,14 +29,13 @@ public class VxVanillaExtendedShader extends VxShaderProgram {
         bindAttribute(0, "Position");
         bindAttribute(1, "Color");
         bindAttribute(2, "UV0");
-        bindAttribute(4, "UV2"); // Lightmap
+        bindAttribute(4, "UV2");    // Lightmap
         bindAttribute(5, "Normal");
-        bindAttribute(8, "Tangent"); // Bound to satisfy layout, unused in vanilla logic
+        bindAttribute(8, "Tangent"); // Required for TBN Matrix calculation
     }
 
     /**
      * Registers all uniform variables required by the shader program.
-     * Maps the uniform names from the GLSL source to integer locations.
      */
     @Override
     protected void registerUniforms() {
@@ -49,7 +48,8 @@ public class VxVanillaExtendedShader extends VxShaderProgram {
         createUniform("Sampler0"); // Albedo
         createUniform("Sampler1"); // Overlay
         createUniform("Sampler2"); // Lightmap
-        createUniform("Sampler3"); // Specular / Emissive
+        createUniform("Sampler3"); // LabPBR Specular (Roughness/Metallic/Emissive)
+        createUniform("Sampler4"); // Normal Map
 
         // Lighting Vectors
         createUniform("Light0_Direction");
@@ -58,7 +58,6 @@ public class VxVanillaExtendedShader extends VxShaderProgram {
         // Material Properties
         createUniform("ColorModulator");
         createUniform("AlphaCutoff");
-        createUniform("UseEmissive"); // Controls whether Sampler3 alpha is used for emission
 
         // Fog Settings
         createUniform("FogStart");
