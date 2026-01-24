@@ -893,14 +893,12 @@ public class VxRenderQueue {
 
     /**
      * Captures the current OpenGL active texture unit and the 2D texture bindings
-     * for units 0 through 4.
-     * <p>
-     * Updated to include Unit 4 (Normal Maps) to ensure state integrity.
+     * for units 0 through 2.
      *
-     * @return An array containing the saved state (Active Unit + 5 Texture IDs).
+     * @return An array containing the saved state (Active Unit + 3 Texture IDs).
      */
     private int[] captureTextureState() {
-        int[] state = new int[6];
+        int[] state = new int[4];
         state[0] = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
 
         GL13.glActiveTexture(GL13.GL_TEXTURE0);
@@ -912,29 +910,17 @@ public class VxRenderQueue {
         GL13.glActiveTexture(GL13.GL_TEXTURE2);
         state[3] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
 
-        GL13.glActiveTexture(GL13.GL_TEXTURE3);
-        state[4] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
-
-        GL13.glActiveTexture(GL13.GL_TEXTURE4);
-        state[5] = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
-
         return state;
     }
 
     /**
      * Restores the OpenGL texture state from the provided state array.
      * <p>
-     * Restores bindings for units 0-4.
+     * Restores bindings for units 0-2.
      *
      * @param state The state array previously returned by {@link #captureTextureState()}.
      */
     private void restoreTextureState(int[] state) {
-        GL13.glActiveTexture(GL13.GL_TEXTURE4);
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, state[5]);
-
-        GL13.glActiveTexture(GL13.GL_TEXTURE3);
-        GL11.glBindTexture(GL11.GL_TEXTURE_2D, state[4]);
-
         GL13.glActiveTexture(GL13.GL_TEXTURE2);
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, state[3]);
 
