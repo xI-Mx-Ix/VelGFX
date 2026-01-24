@@ -402,12 +402,14 @@ public class VxRenderQueue {
      * {@link VxVanillaExtendedShader} to provide features such as per-pixel lighting, normal mapping,
      * and emissive textures, while strictly adhering to Vanilla's fog and lighting calculations.
      * <p>
+     * <b>Dynamic Lighting:</b>
+     * This method calculates the actual position of the Sun and Moon based on the current world time.
+     * This ensures that specular reflections on PBR materials align correctly with the celestial bodies.
+     * <p>
      * <b>State Management:</b>
      * To ensure seamless integration with the Minecraft rendering engine, this method isolates its
      * OpenGL state changes. It captures the texture bindings of the critical texture units (0-4)
-     * before execution and restores them immediately after. This prevents "state bleeding" where
-     * custom texture bindings might persist and corrupt subsequent render passes (e.g., items held
-     * in hand or particle effects).
+     * before execution and restores them immediately after.
      *
      * @param viewMatrix        The current camera view matrix (World Space to Camera Space).
      * @param projectionMatrix  The current projection matrix (Camera Space to Clip Space).
@@ -417,8 +419,6 @@ public class VxRenderQueue {
     private void renderBatchVanilla(Matrix4f viewMatrix, Matrix4f projectionMatrix, boolean renderTranslucent) {
         // 1. Snapshot the current OpenGL texture state.
         // We preserve the state of Texture Units 0-4 to restore them later.
-        // This ensures that whatever textures Vanilla had bound (e.g., the block atlas or lightmap)
-        // remain technically "bound" from the perspective of the engine's state cache after we return.
         int[] savedTextureState = captureTextureState();
 
         // 2. Prepare the custom shader program.
@@ -426,7 +426,6 @@ public class VxRenderQueue {
         shader.bind();
 
         // 3. Upload standard environment uniforms.
-        // These uniforms match the standard Minecraft inputs for fog, color modulation, and matrix transformation.
         shader.setUniform("ProjMat", projectionMatrix);
         shader.setUniform("ColorModulator", RenderSystem.getShaderColor());
         shader.setUniform("FogStart", RenderSystem.getShaderFogStart());
@@ -434,20 +433,45 @@ public class VxRenderQueue {
         shader.setUniform("FogColor", RenderSystem.getShaderFogColor());
         shader.setUniform("FogShape", RenderSystem.getShaderFogShape().getIndex());
 
-        // 4. Upload Lighting Directions.
-        // We provide the standard directional light vectors (Sky and Block/Directional) to the shader.
-        // These are used for both the vanilla diffuse fallback and the PBR specular calculations.
-        shader.setUniform("Light0_Direction", VANILLA_LIGHT0);
-        shader.setUniform("Light1_Direction", VANILLA_LIGHT1);
+        // 4. Calculate Dynamic Lighting Directions
+        // We calculate the direction of the sun based on the world time to ensure
+        // specular highlights move correctly across the sky.
 
-        // Reset the generic vertex color attribute to pure white (1.0) to prevent unwanted tinting.
+        float sunAngle = 0.0f;
+        if (Minecraft.getInstance().level != null) {
+            // getSunAngle returns radians (0 to 2PI), where 0 is noon.
+            sunAngle = Minecraft.getInstance().level.getSunAngle(Minecraft.getInstance().getTimer().getGameTimeDeltaPartialTick(true));
+        }
+
+        // Calculate Sun Vector in World Space
+        // Minecraft's sun rotates roughly around the Z-axis.
+        // Noon (0.0) -> Up (+Y). Sunset -> West.
+        float sunX = (float) Math.sin(sunAngle);
+        float sunY = (float) Math.cos(sunAngle);
+        float sunZ = 0.0f; // Simplified orbit
+
+        // Set Light 0 (Sun)
+        AUX_LIGHT0.set(sunX, sunY, sunZ).normalize();
+
+        // Set Light 1 (Moon) - Opposite to Sun
+        AUX_LIGHT1.set(-sunX, -sunY, -sunZ).normalize();
+
+        // Transform Lights to View Space
+        // The shader expects light directions relative to the camera.
+        // We take the View Matrix, strip the translation (position), and apply the rotation.
+        AUX_MODEL_VIEW.set(viewMatrix);
+        AUX_MODEL_VIEW.setTranslation(0, 0, 0);
+
+        AUX_MODEL_VIEW.transformDirection(AUX_LIGHT0);
+        shader.setUniform("Light0_Direction", AUX_LIGHT0);
+
+        AUX_MODEL_VIEW.transformDirection(AUX_LIGHT1);
+        shader.setUniform("Light1_Direction", AUX_LIGHT1);
+
+        // Reset the generic vertex color attribute to pure white (1.0).
         GL30.glVertexAttrib4f(1, 1.0f, 1.0f, 1.0f, 1.0f);
 
         // 5. Configure Global Textures.
-        // Note: We deliberately fetch the specific texture IDs from RenderSystem rather than using
-        // the captured state. This guarantees that our shader receives the valid, currently active
-        // Lightmap and Overlay textures, ensuring correct lighting and damage tints even if the
-        // raw OpenGL state was temporarily empty (0).
 
         // Unit 1: Overlay Texture (Used for the red damage tint / flash).
         GL13.glActiveTexture(GL13.GL_TEXTURE1);
@@ -455,14 +479,12 @@ public class VxRenderQueue {
         shader.setUniform("Sampler1", 1);
 
         // Unit 2: Lightmap Texture (Contains Sky Light and Block Light data).
-        // Ensure the light layer is active in the engine before binding.
         Minecraft.getInstance().gameRenderer.lightTexture().turnOnLightLayer();
         GL13.glActiveTexture(GL13.GL_TEXTURE2);
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, RenderSystem.getShaderTexture(2));
         shader.setUniform("Sampler2", 2);
 
-        // Unit 3: Specular/Emissive Map.
-        // We bind 0 initially to ensure no stale data is sampled if a material lacks this map.
+        // Unit 3: Specular/Emissive Map (PBR Data).
         shader.setUniform("Sampler3", 3);
 
         // Unit 4: Normal Map (Tangent Space).
@@ -517,7 +539,6 @@ public class VxRenderQueue {
      * <ul>
      *     <li>Calculating the Model-View Matrix for vertex positioning.</li>
      *     <li>Calculating the Normal Matrix for correct lighting orientation.</li>
-     *     <li>Transforming light vectors into View Space.</li>
      *     <li>Binding material-specific textures (Albedo, Normal, Specular).</li>
      *     <li>Managing render state flags (Culling, Blending).</li>
      * </ul>
@@ -530,34 +551,20 @@ public class VxRenderQueue {
     private void renderBucketVanilla(List<Integer> bucket, VxVanillaExtendedShader shader, Matrix4f viewMatrix, VxRenderType currentType) {
         boolean isCullingEnabled = true;
 
-        // 1. Prepare View Space rotation.
-        // Used to rotate direction vectors without applying translation.
-        AUX_MODEL_VIEW.set(viewMatrix);
-        AUX_MODEL_VIEW.setTranslation(0, 0, 0);
-
-        // 2. Transform Light Directions.
-        // The shader expects light vectors in View Space to perform dot-product lighting against View Space normals.
-        AUX_LIGHT0.set(VANILLA_LIGHT0);
-        AUX_MODEL_VIEW.transformDirection(AUX_LIGHT0);
-        shader.setUniform("Light0_Direction", AUX_LIGHT0);
-
-        AUX_LIGHT1.set(VANILLA_LIGHT1);
-        AUX_MODEL_VIEW.transformDirection(AUX_LIGHT1);
-        shader.setUniform("Light1_Direction", AUX_LIGHT1);
-
         for (Integer i : bucket) {
             IVxRenderableMesh mesh = this.meshes[i];
             Matrix4f modelMat = this.modelMatrices[i];
             int packedLight = this.packedLights[i];
 
-            // 3. Compute ModelView Matrix.
+            // 1. Compute ModelView Matrix.
             // Combines the Camera View and Object Model matrices.
             AUX_MODEL_VIEW.set(viewMatrix).mul(modelMat);
             shader.setUniform("ModelViewMat", AUX_MODEL_VIEW);
 
-            // 4. Compute Normal Matrix.
+            // 2. Compute Normal Matrix.
             // Required to correctly transform normal vectors, handling non-uniform scaling.
             // Calculation: Transpose(Inverse(ModelView)).
+            // We expect valid matrices; degenerate morph states are handled in the vertex shader.
             AUX_INVERSE_VIEW.set(AUX_MODEL_VIEW).invert().transpose();
             AUX_INVERSE_VIEW.get3x3(AUX_NORMAL_MAT);
 
@@ -565,15 +572,15 @@ public class VxRenderQueue {
             AUX_NORMAL_MAT.get(MATRIX_BUFFER_9);
             GL20.glUniformMatrix3fv(shader.getUniformLocation("NormalMat"), false, MATRIX_BUFFER_9);
 
-            // 5. Bind Mesh Geometry.
+            // 3. Bind Mesh Geometry.
             mesh.setupVaoState();
 
-            // 6. Set Lightmap Coordinates.
+            // 4. Set Lightmap Coordinates.
             // Passed as a generic vertex attribute (Location 4) to correspond with standard shader inputs.
             GL30.glDisableVertexAttribArray(AT_UV2);
             GL30.glVertexAttribI2i(AT_UV2, packedLight & 0xFFFF, packedLight >> 16);
 
-            // 7. Process Draw Commands.
+            // 5. Process Draw Commands.
             for (VxDrawCommand rawCommand : mesh.getDrawCommands()) {
                 VxDrawCommand command = mesh.resolveCommand(rawCommand);
                 VxMaterial mat = command.material;
