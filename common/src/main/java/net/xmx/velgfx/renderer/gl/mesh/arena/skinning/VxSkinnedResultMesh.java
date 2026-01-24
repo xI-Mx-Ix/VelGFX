@@ -9,9 +9,10 @@ import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.VxIndexBuffer;
 import net.xmx.velgfx.renderer.gl.layout.VxSkinnedResultVertexLayout;
 import net.xmx.velgfx.renderer.gl.mesh.IVxRenderableMesh;
-import net.xmx.velgfx.renderer.gl.mesh.VxRenderQueue;
 import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaMesh;
 import net.xmx.velgfx.renderer.gl.mesh.arena.VxMemorySegment;
+import net.xmx.velgfx.renderer.pipeline.VxRenderDataStore;
+import net.xmx.velgfx.renderer.pipeline.VxRenderPipeline;
 
 import java.util.List;
 
@@ -64,20 +65,45 @@ public class VxSkinnedResultMesh implements IVxRenderableMesh {
     @Override
     public void queueRender(PoseStack poseStack, int packedLight) {
         if (!isDeleted) {
-            VxRenderQueue.getInstance().add(this, poseStack, packedLight);
+            submitCommands(poseStack, packedLight);
         }
     }
 
-    @Override
-    public void setupVaoState() {
-        // 1. Bind the Shared Skinning VAO.
-        // This VAO is configured with the vertex attributes of the global Skinning Arena VBO.
-        VxSkinningArena.getInstance().bindVao();
+    /**
+     * Submits the stored draw commands to the render data store.
+     * Resolves source index and result vertex offsets and records
+     * them for batched rendering.
+     *
+     * @param poseStack   Provides model and normal matrices.
+     * @param packedLight Packed light value for lighting.
+     */
+    private void submitCommands(PoseStack poseStack, int packedLight) {
+        VxRenderDataStore store = VxRenderPipeline.getInstance().getStore();
 
-        // 2. Bind the specific EBO of the source model.
-        // Since we are reusing the index structure of the static model, we must bind its EBO here.
-        // This modifies the element buffer binding of the currently active VAO (the Skinning VAO).
-        sourceIndexBuffer.bind();
+        // Use the global Skinning Arena VAO, but the Source Mesh's EBO
+        int vaoId = VxSkinningArena.getInstance().getSharedVaoId();
+        int eboId = sourceIndexBuffer.getEboId();
+
+        for (VxDrawCommand relativeCmd : drawCommands) {
+            // Indices: Start at Source Mesh's EBO offset + Command offset
+            long finalIndexOffset = this.sourceIndexSegment.offset + relativeCmd.indexOffsetBytes;
+
+            // Vertices: Start at Result Mesh's VBO offset + Command base vertex
+            int finalBaseVertex = this.resultBaseVertex + relativeCmd.baseVertex;
+
+            // Record directly to SoA
+            store.record(
+                    vaoId,
+                    eboId,
+                    relativeCmd.indexCount,
+                    finalIndexOffset,
+                    finalBaseVertex,
+                    relativeCmd.material,
+                    poseStack.last().pose(),
+                    poseStack.last().normal(),
+                    packedLight
+            );
+        }
     }
 
     @Override
@@ -86,17 +112,9 @@ public class VxSkinnedResultMesh implements IVxRenderableMesh {
         long finalIndexOffset = this.sourceIndexSegment.offset + relativeCmd.indexOffsetBytes;
 
         // Vertices: Start at Mesh's Result VBO offset + Command base vertex
-        // We add relativeCmd.baseVertex because if the mesh has multiple parts, the command
-        // might target a specific vertex range within the mesh.
         int finalBaseVertex = this.resultBaseVertex + relativeCmd.baseVertex;
 
         return new VxDrawCommand(relativeCmd.material, relativeCmd.indexCount, finalIndexOffset, finalBaseVertex);
-    }
-
-    @Override
-    public int getFinalVertexOffset(VxDrawCommand command) {
-        // Not used in the indexed rendering path, but required by interface.
-        return 0;
     }
 
     @Override

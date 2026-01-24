@@ -8,7 +8,8 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
 import net.xmx.velgfx.renderer.gl.mesh.IVxRenderableMesh;
-import net.xmx.velgfx.renderer.gl.mesh.VxRenderQueue;
+import net.xmx.velgfx.renderer.pipeline.VxRenderDataStore;
+import net.xmx.velgfx.renderer.pipeline.VxRenderPipeline;
 import net.xmx.velgfx.renderer.util.VxGlGarbageCollector;
 import net.xmx.velgfx.resources.VxTextureLoader;
 
@@ -134,26 +135,57 @@ public class VxArenaMesh implements IVxRenderableMesh {
     @Override
     public void queueRender(PoseStack poseStack, int packedLight) {
         if (!isDeleted) {
-            VxRenderQueue.getInstance().add(this, poseStack, packedLight);
+            submitCommands(allDrawCommands, poseStack, packedLight);
         }
     }
 
     /**
      * Queues a specific subset of draw commands for rendering.
      * <p>
-     * This creates a lightweight proxy object (GroupView) that shares the parent's
-     * buffer configuration (VBO/VAO) but renders only the provided commands.
-     * This is essential for models where the grouping logic is managed externally.
+     * This writes directly to the SoA data store without creating intermediate objects.
      *
      * @param poseStack   The transformation stack.
      * @param packedLight The light value.
      * @param commands    The specific list of draw commands to execute.
      */
     public void queueRenderSubset(PoseStack poseStack, int packedLight, List<VxDrawCommand> commands) {
-        if (isDeleted || commands == null || commands.isEmpty()) return;
+        if (!isDeleted && commands != null && !commands.isEmpty()) {
+            submitCommands(commands, poseStack, packedLight);
+        }
+    }
 
-        // Create a temporary view of this mesh for the specific subset of commands
-        VxRenderQueue.getInstance().add(new GroupView(commands), poseStack, packedLight);
+    /**
+     * Submits draw commands to the render data store.
+     * Resolves relative index and vertex offsets to absolute values
+     * and records them for batched rendering.
+     *
+     * @param commands    The draw commands to submit.
+     * @param poseStack   Provides model and normal matrices.
+     * @param packedLight Packed light value for lighting.
+     */
+    private void submitCommands(List<VxDrawCommand> commands, PoseStack poseStack, int packedLight) {
+        VxRenderDataStore store = VxRenderPipeline.getInstance().getStore();
+        int vaoId = parentBuffer.getVaoId();
+        int eboId = parentBuffer.getIndexBuffer().getEboId();
+
+        for (VxDrawCommand cmd : commands) {
+            // Calculate absolute offsets
+            long finalIndexOffset = this.indexSegment.offset + cmd.indexOffsetBytes;
+            int finalBaseVertex = this.baseVertexOffset + cmd.baseVertex;
+
+            // Record directly to SoA
+            store.record(
+                    vaoId,
+                    eboId,
+                    cmd.indexCount,
+                    finalIndexOffset,
+                    finalBaseVertex,
+                    cmd.material,
+                    poseStack.last().pose(),
+                    poseStack.last().normal(),
+                    packedLight
+            );
+        }
     }
 
     @Override
@@ -167,19 +199,8 @@ public class VxArenaMesh implements IVxRenderableMesh {
     }
 
     @Override
-    public void setupVaoState() {
-        // Binds the Arena VAO which has both VBO and EBO configured correctly
-        this.parentBuffer.bindVao();
-    }
-
-    @Override
-    public int getFinalVertexOffset(VxDrawCommand command) {
-        // Used for legacy glDrawArrays logic (e.g., skinning pass input), returns absolute vertex index
-        return this.baseVertexOffset + command.baseVertex;
-    }
-
-    @Override
     public VxDrawCommand resolveCommand(VxDrawCommand relativeCmd) {
+        // Helper for Skinned Models compute pass
         // Absolute Index Offset = Mesh EBO Segment Start + Command Index Offset
         long finalIndexOffset = this.indexSegment.offset + relativeCmd.indexOffsetBytes;
 
@@ -192,6 +213,10 @@ public class VxArenaMesh implements IVxRenderableMesh {
     @Override
     public List<VxDrawCommand> getDrawCommands() {
         return allDrawCommands;
+    }
+
+    public List<VxDrawCommand> getGroupCommands(String groupName) {
+        return groupDrawCommands.get(groupName);
     }
 
     public VxMemorySegment getVertexSegment() {
@@ -215,29 +240,5 @@ public class VxArenaMesh implements IVxRenderableMesh {
     @Override
     public boolean isDeleted() {
         return isDeleted;
-    }
-
-    /**
-     * A lightweight internal proxy that presents a subset of draw commands
-     * while sharing the parent's geometry configuration.
-     */
-    protected class GroupView extends VxArenaMesh {
-        public GroupView(List<VxDrawCommand> groupCommands) {
-            super(VxArenaMesh.this.parentBuffer,
-                    VxArenaMesh.this.vertexSegment,
-                    VxArenaMesh.this.indexSegment,
-                    groupCommands, Collections.emptyMap());
-        }
-
-        @Override
-        public void delete() {
-            // No-op: The GroupView is ephemeral; only the parent mesh owns the memory.
-        }
-
-        @Override
-        public VxDrawCommand resolveCommand(VxDrawCommand relativeCmd) {
-            // Delegate resolution to parent to ensure correct offsets
-            return VxArenaMesh.this.resolveCommand(relativeCmd);
-        }
     }
 }

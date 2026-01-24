@@ -202,6 +202,15 @@ public class VxArenaBuffer {
         GL30.glBindVertexArray(vertexBuffer.getVaoId());
     }
 
+    /**
+     * Gets the OpenGL ID of the Vertex Array Object (VAO).
+     *
+     * @return The VAO ID.
+     */
+    public int getVaoId() {
+        return vertexBuffer.getVaoId();
+    }
+
     public VxIndexBuffer getIndexBuffer() {
         return indexBuffer;
     }

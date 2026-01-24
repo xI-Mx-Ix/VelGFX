@@ -10,7 +10,7 @@ import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import java.util.List;
 
 /**
- * Defines the contract for any mesh object that can be processed by the {@link VxRenderQueue}.
+ * Defines the contract for any mesh object that can be processed.
  * <p>
  * This abstraction allows the render pipeline to handle both static geometry (residing in shared Arenas)
  * and dynamic geometry (residing in dedicated Skinned Result VBOs) uniformly.
@@ -28,14 +28,6 @@ public interface IVxRenderableMesh {
     void queueRender(PoseStack poseStack, int packedLight);
 
     /**
-     * Prepares the OpenGL Vertex Array State for this mesh.
-     * <p>
-     * Called by the Render Queue immediately before drawing. This typically binds the VAO
-     * and ensures the correct Element Buffer Object (EBO) is bound.
-     */
-    void setupVaoState();
-
-    /**
      * Resolves a relative draw command into an absolute draw command used for rendering.
      * <p>
      * Since meshes are often packed into larger Arena Buffers, the command stored within the mesh
@@ -46,14 +38,6 @@ public interface IVxRenderableMesh {
      * @return The absolute draw command ready for {@code glDrawElementsBaseVertex}.
      */
     VxDrawCommand resolveCommand(VxDrawCommand command);
-
-    /**
-     * Calculates the absolute vertex start index for a specific command (Legacy / Transform Feedback support).
-     *
-     * @param command The draw command relative to the mesh start.
-     * @return The absolute index in the currently bound VBO.
-     */
-    int getFinalVertexOffset(VxDrawCommand command);
 
     /**
      * Retrieves the list of draw commands (Materials + Counts) for this mesh.

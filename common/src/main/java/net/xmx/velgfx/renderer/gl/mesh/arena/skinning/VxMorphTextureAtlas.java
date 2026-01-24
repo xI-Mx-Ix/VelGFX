@@ -7,11 +7,7 @@ package net.xmx.velgfx.renderer.gl.mesh.arena.skinning;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.xmx.velgfx.renderer.VelGFX;
 import org.lwjgl.BufferUtils;
-import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL13;
-import org.lwjgl.opengl.GL15;
-import org.lwjgl.opengl.GL30;
-import org.lwjgl.opengl.GL31;
+import org.lwjgl.opengl.*;
 
 import java.nio.FloatBuffer;
 
@@ -54,6 +50,7 @@ public class VxMorphTextureAtlas {
 
     /**
      * Gets the global singleton instance.
+     *
      * @return The atlas instance.
      */
     public static synchronized VxMorphTextureAtlas getInstance() {

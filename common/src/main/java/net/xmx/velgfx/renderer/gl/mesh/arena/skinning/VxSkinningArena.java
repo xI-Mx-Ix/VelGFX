@@ -279,13 +279,13 @@ public class VxSkinningArena {
     }
 
     /**
-     * Binds the Shared Vertex Array Object (VAO) associated with this arena.
-     * <p>
-     * This is used by the {@link VxSkinnedResultMesh}
-     * during the main render pass to interpret the data stored in the giant buffer.
+     * Retrieves the OpenGL ID of the global shared VAO.
+     * Used for SoA batching.
+     *
+     * @return The VAO ID.
      */
-    public void bindVao() {
-        GL30.glBindVertexArray(this.sharedVaoId);
+    public int getSharedVaoId() {
+        return sharedVaoId;
     }
 
     /**

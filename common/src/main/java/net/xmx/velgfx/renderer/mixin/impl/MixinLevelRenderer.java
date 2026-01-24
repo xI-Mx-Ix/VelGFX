@@ -9,8 +9,8 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LightTexture;
-import net.xmx.velgfx.renderer.gl.mesh.VxRenderQueue;
 import net.xmx.velgfx.renderer.gl.mesh.arena.skinning.VxSkinningBatcher;
+import net.xmx.velgfx.renderer.pipeline.VxRenderPipeline;
 import net.xmx.velgfx.renderer.util.VxGlGarbageCollector;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -38,13 +38,13 @@ public class MixinLevelRenderer {
     /**
      * Injects at the very start of the frame rendering process.
      * <p>
-     * Responsible for resetting the render queues to clear data from the previous frame
+     * Responsible for resetting the render pipeline (clearing SoA counters)
      * and processing any pending OpenGL resource deletions on the render thread.
      */
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void velgfx_onRenderLevel_Head(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix, Matrix4f projectionMatrix, CallbackInfo ci) {
-        // Reset the main render queue (clear meshes and matrices)
-        VxRenderQueue.getInstance().reset();
+        // Reset the main render pipeline (counters, buckets, materials)
+        VxRenderPipeline.getInstance().reset();
 
         // Reset the skinning batcher (clear queued models for compute)
         VxSkinningBatcher.getInstance().reset();
@@ -81,14 +81,14 @@ public class MixinLevelRenderer {
         // This minimizes state changes by processing all skinned models in one contiguous block.
         VxSkinningBatcher.getInstance().flush();
 
-        // 2. Render the Opaque and Cutout meshes using the computed skinning data
-        VxRenderQueue.getInstance().flushOpaque(frustumMatrix, projectionMatrix);
+        // 2. Render the Opaque and Cutout meshes using the SoA Pipeline
+        VxRenderPipeline.getInstance().flushOpaque(frustumMatrix, projectionMatrix);
     }
 
     /**
      * Injects after the vanilla Translucent pass is finished.
      * <p>
-     * Renders VelGFX Translucent geometry. The queue sorts these objects back-to-front
+     * Renders VelGFX Translucent geometry. The pipeline sorts these objects back-to-front
      * based on the provided camera position to ensure correct alpha blending.
      */
     @Inject(
@@ -102,6 +102,6 @@ public class MixinLevelRenderer {
     )
     private void velgfx_onRenderLevel_AfterTranslucent(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix, Matrix4f projectionMatrix, CallbackInfo ci) {
         Vector3f camPos = camera.getPosition().toVector3f();
-        VxRenderQueue.getInstance().flushTranslucent(frustumMatrix, projectionMatrix, camPos);
+        VxRenderPipeline.getInstance().flushTranslucent(frustumMatrix, projectionMatrix, camPos);
     }
 }
