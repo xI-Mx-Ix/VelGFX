@@ -6,6 +6,7 @@ package net.xmx.velgfx.renderer.model.animation;
 
 import net.xmx.velgfx.renderer.model.morph.VxMorphController;
 import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
+import net.xmx.velgfx.renderer.util.VxTempCache;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
@@ -53,13 +54,6 @@ public class VxAnimator {
      * If true, the animation time will not advance automatically via update().
      */
     private boolean isPaused = false;
-
-    // --- Scratch Objects (Reuse) ---
-    // Used for interpolation calculations to avoid allocation.
-    private final Vector3f vA = new Vector3f();
-    private final Vector3f vB = new Vector3f();
-    private final Quaternionf qA = new Quaternionf();
-    private final Quaternionf qB = new Quaternionf();
 
     /**
      * Constructs a new Animator.
@@ -175,11 +169,17 @@ public class VxAnimator {
     }
 
     /**
-     * Iterates over all bones, samples the animation channels, interpolates, blending if necessary,
-     * and writes the results to the skeleton's local transform arrays.
+     * Iterates over all bones, samples the animation channels, and updates the skeleton.
      */
     private void applyAnimationToSkeleton() {
         int boneCount = skeleton.boneCount;
+        VxTempCache cache = VxTempCache.get();
+
+        // Get scratch objects
+        Vector3f vA = cache.vec3_1;
+        Vector3f vB = cache.vec3_2;
+        Quaternionf qA = cache.quat_1;
+        Quaternionf qB = cache.quat_2;
 
         for (int i = 0; i < boneCount; i++) {
             VxAnimation.NodeChannel chA = currentAnimation.getChannel(i);
@@ -189,10 +189,10 @@ public class VxAnimator {
             skeleton.getLocalTranslation(i, vA); // Initialize with current state (or bind pose)
 
             if (chA != null && chA.posTimes.length > 0) {
-                sampleVec3(chA.posTimes, chA.posValues, currentTime, vA);
+                sampleVec3(chA.posTimes, chA.posValues, currentTime, vA, vB); // Pass vB as scratch
             }
             if (isBlending && chB != null && chB.posTimes.length > 0) {
-                sampleVec3(chB.posTimes, chB.posValues, nextAnimationTime, vB);
+                sampleVec3(chB.posTimes, chB.posValues, nextAnimationTime, vB, cache.vec3_3); // Need 3rd vector for scratch inside sample
                 vA.lerp(vB, blendFactor); // Linear blend between Animation A and B
             }
             skeleton.setLocalTranslation(i, vA.x, vA.y, vA.z);
@@ -201,10 +201,10 @@ public class VxAnimator {
             skeleton.getLocalRotation(i, qA);
 
             if (chA != null && chA.rotTimes.length > 0) {
-                sampleQuat(chA.rotTimes, chA.rotValues, currentTime, qA);
+                sampleQuat(chA.rotTimes, chA.rotValues, currentTime, qA, qB);
             }
             if (isBlending && chB != null && chB.rotTimes.length > 0) {
-                sampleQuat(chB.rotTimes, chB.rotValues, nextAnimationTime, qB);
+                sampleQuat(chB.rotTimes, chB.rotValues, nextAnimationTime, qB, cache.quat_2); // Reuse quat_2 carefully
                 qA.slerp(qB, blendFactor); // Spherical blend between Animation A and B
             }
             skeleton.setLocalRotation(i, qA.x, qA.y, qA.z, qA.w);
@@ -213,17 +213,15 @@ public class VxAnimator {
             skeleton.getLocalScale(i, vA);
 
             if (chA != null && chA.scaleTimes.length > 0) {
-                sampleVec3(chA.scaleTimes, chA.scaleValues, currentTime, vA);
+                sampleVec3(chA.scaleTimes, chA.scaleValues, currentTime, vA, vB);
             }
             if (isBlending && chB != null && chB.scaleTimes.length > 0) {
-                sampleVec3(chB.scaleTimes, chB.scaleValues, nextAnimationTime, vB);
+                sampleVec3(chB.scaleTimes, chB.scaleValues, nextAnimationTime, vB, cache.vec3_3);
                 vA.lerp(vB, blendFactor);
             }
             skeleton.setLocalScale(i, vA.x, vA.y, vA.z);
 
-            // --- Morph Weights (Special case) ---
-            // Morph weights are usually defined on the root node or the mesh node.
-            // We apply them to the morph controller if present.
+            // --- Morph Weights ---
             if (morphController != null) {
                 applyMorphs(chA, chB);
             }
@@ -271,7 +269,7 @@ public class VxAnimator {
      * @param time   Current time.
      * @param result Vector to store the result.
      */
-    private void sampleVec3(float[] times, float[] values, double time, Vector3f result) {
+    private void sampleVec3(float[] times, float[] values, double time, Vector3f result, Vector3f scratch) {
         if (times.length == 1) {
             result.set(values[0], values[1], values[2]);
             return;
@@ -285,8 +283,8 @@ public class VxAnimator {
         int i2 = next * 3;
 
         result.set(values[i1], values[i1 + 1], values[i1 + 2]);
-        vB.set(values[i2], values[i2 + 1], values[i2 + 2]);
-        result.lerp(vB, t);
+        scratch.set(values[i2], values[i2 + 1], values[i2 + 2]);
+        result.lerp(scratch, t);
     }
 
     /**
@@ -299,7 +297,7 @@ public class VxAnimator {
      * @param time   Current time.
      * @param result Quaternion to store the result.
      */
-    private void sampleQuat(float[] times, float[] values, double time, Quaternionf result) {
+    private void sampleQuat(float[] times, float[] values, double time, Quaternionf result, Quaternionf scratch) {
         if (times.length == 1) {
             result.set(values[0], values[1], values[2], values[3]);
             return;
@@ -313,8 +311,8 @@ public class VxAnimator {
         int i2 = next * 4;
 
         result.set(values[i1], values[i1 + 1], values[i1 + 2], values[i1 + 3]);
-        qB.set(values[i2], values[i2 + 1], values[i2 + 2], values[i2 + 3]);
-        result.slerp(qB, t);
+        scratch.set(values[i2], values[i2 + 1], values[i2 + 2], values[i2 + 3]);
+        result.slerp(scratch, t);
     }
 
     /**

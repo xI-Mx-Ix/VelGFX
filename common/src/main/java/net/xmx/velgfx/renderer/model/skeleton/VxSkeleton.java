@@ -4,6 +4,7 @@
  */
 package net.xmx.velgfx.renderer.model.skeleton;
 
+import net.xmx.velgfx.renderer.util.VxTempCache;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
@@ -139,16 +140,6 @@ public class VxSkeleton {
      */
     private final float[] skinningMatrices;
 
-    // Scratchpad Variables (Reused to avoid GC)
-
-    // Pre-allocated reusable objects to avoid garbage generation during matrix math.
-    private final Matrix4f scratchLocal = new Matrix4f();
-    private final Matrix4f scratchGlobal = new Matrix4f();
-    private final Matrix4f scratchParent = new Matrix4f();
-    private final Quaternionf scratchRot = new Quaternionf();
-    private final Vector3f scratchPos = new Vector3f();
-    private final Vector3f scratchScale = new Vector3f();
-
     /**
      * Master Constructor.
      * <p>
@@ -236,49 +227,57 @@ public class VxSkeleton {
     /**
      * Recalculates the Global Matrices and Skinning Matrices based on the current Local state.
      * <p>
-     * This method iterates linearly through the bones. Because the {@code parentIndices} array
-     * guarantees a topological sort, we are guaranteed that a parent's global matrix
-     * has already been computed before we process its children.
-     * <p>
-     * This linear access pattern is highly cache-efficient compared to tree traversal.
+     * Uses {@link VxTempCache} to perform calculations without allocation.
      */
     public void updateMatrices() {
+        // Fetch cache once per update to avoid ThreadLocal lookup overhead in the loop
+        VxTempCache cache = VxTempCache.get();
+
+        // Aliases for cache objects to improve readability
+        Vector3f pos = cache.vec3_1;
+        Quaternionf rot = cache.quat_1;
+        Vector3f scale = cache.vec3_2;
+        Matrix4f localMat = cache.mat4_1;
+        Matrix4f globalMat = cache.mat4_2;
+        Matrix4f parentMat = cache.mat4_3;
+
         for (int i = 0; i < boneCount; i++) {
             // 1. Construct Local Matrix from flat arrays
             int p3 = i * 3;
             int p4 = i * 4;
 
-            scratchPos.set(localPositions[p3], localPositions[p3 + 1], localPositions[p3 + 2]);
-            scratchRot.set(localRotations[p4], localRotations[p4 + 1], localRotations[p4 + 2], localRotations[p4 + 3]);
-            scratchScale.set(localScales[p3], localScales[p3 + 1], localScales[p3 + 2]);
+            pos.set(localPositions[p3], localPositions[p3 + 1], localPositions[p3 + 2]);
+            rot.set(localRotations[p4], localRotations[p4 + 1], localRotations[p4 + 2], localRotations[p4 + 3]);
+            scale.set(localScales[p3], localScales[p3 + 1], localScales[p3 + 2]);
 
-            // Combine TRS into the scratch matrix
-            scratchLocal.translationRotateScale(scratchPos, scratchRot, scratchScale);
+            // Combine TRS into the local matrix
+            localMat.translationRotateScale(pos, rot, scale);
 
             // 2. Multiply with Parent Global Matrix
             int parentIndex = parentIndices[i];
             if (parentIndex != -1) {
-                // Read parent matrix from the ALREADY COMPUTED portion of the globalMatrices array.
-                // The parentIndex is guaranteed to be < i due to topological sort.
-                scratchParent.set(globalMatrices, parentIndex * 16);
+                // Read parent matrix from the array
+                parentMat.set(globalMatrices, parentIndex * 16);
 
                 // Global = Parent * Local
-                scratchParent.mul(scratchLocal, scratchGlobal);
+                parentMat.mul(localMat, globalMat);
             } else {
                 // Root node: Global is just Local
-                scratchGlobal.set(scratchLocal);
+                globalMat.set(localMat);
             }
 
             // 3. Store Global Matrix back into the SoA
-            scratchGlobal.get(globalMatrices, i * 16);
+            globalMat.get(globalMatrices, i * 16);
 
             // 4. Compute Skinning Matrix (Global * IBM)
-            // Reuse scratchLocal to load the IBM from the array to avoid allocation
-            scratchLocal.set(inverseBindMatrices, i * 16);
-            scratchGlobal.mul(scratchLocal, scratchGlobal);
+            // Reuse localMat to hold the IBM (read from array)
+            localMat.set(inverseBindMatrices, i * 16);
+
+            // globalMat (Global) * localMat (IBM) -> globalMat (Result)
+            globalMat.mul(localMat, globalMat);
 
             // Store final skinning matrix
-            scratchGlobal.get(skinningMatrices, i * 16);
+            globalMat.get(skinningMatrices, i * 16);
         }
     }
 

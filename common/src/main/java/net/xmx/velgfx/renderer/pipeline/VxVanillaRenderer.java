@@ -13,10 +13,10 @@ import net.xmx.velgfx.renderer.gl.material.VxMaterial;
 import net.xmx.velgfx.renderer.gl.shader.impl.VxVanillaExtendedShader;
 import net.xmx.velgfx.renderer.gl.state.VxBlendMode;
 import net.xmx.velgfx.renderer.gl.state.VxRenderType;
+import net.xmx.velgfx.renderer.util.VxTempCache;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
-import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.*;
 
 import java.nio.FloatBuffer;
@@ -30,68 +30,13 @@ import java.nio.FloatBuffer;
  * <ul>
  *     <li>Dynamic lighting calculation based on World Time.</li>
  *     <li>Management of OpenGL states (Blending, Culling, Depth).</li>
- *     <li>Real-time calculation of Matrix data (ModelView and Normal matrices).</li>
+ *     <li>Real-time calculation of Matrix data (ModelView and Normal matrices) using a thread-local cache.</li>
  *     <li>Binding of PBR textures (Normal, Specular) alongside standard Albedo.</li>
  * </ul>
  *
  * @author xI-Mx-Ix
  */
 public class VxVanillaRenderer {
-
-    /**
-     * A direct float buffer used for uploading 4x4 matrices (16 floats) to the GPU.
-     * This avoids creating new float arrays for every uniform upload.
-     */
-    private static final FloatBuffer MATRIX_BUFFER_16 = BufferUtils.createFloatBuffer(16);
-
-    /**
-     * A direct float buffer used for uploading 3x3 matrices (9 floats) to the GPU.
-     * Primarily used for the Normal Matrix.
-     */
-    private static final FloatBuffer MATRIX_BUFFER_9 = BufferUtils.createFloatBuffer(9);
-
-    /**
-     * Scratch matrix for holding the raw Model Matrix of the current object.
-     * Populated from the data store before being multiplied with the View Matrix.
-     */
-    private final Matrix4f auxModel = new Matrix4f();
-
-    /**
-     * Scratch matrix for the combined Model-View Matrix.
-     * Calculated as: {@code ViewMatrix * ModelMatrix}.
-     * This transforms vertices from Object Space to Camera Space.
-     */
-    private final Matrix4f auxModelView = new Matrix4f();
-
-    /**
-     * Scratch matrix used exclusively for calculating the Normal Matrix.
-     * It holds the result of {@code ModelView.invert().transpose()}.
-     */
-    private final Matrix4f auxInverseView = new Matrix4f();
-
-    /**
-     * The final 3x3 Normal Matrix sent to the shader.
-     * Extracted from the top-left corner of the {@link #auxInverseView} matrix.
-     */
-    private final Matrix3f auxNormalMat = new Matrix3f();
-
-    /**
-     * Scratch vector for the Sun's direction.
-     * Used to calculate lighting direction in World Space before transforming to View Space.
-     */
-    private final Vector3f auxLight0 = new Vector3f();
-
-    /**
-     * Scratch vector for the Moon's direction.
-     * Always strictly opposite to the Sun's direction.
-     */
-    private final Vector3f auxLight1 = new Vector3f();
-
-    /**
-     * Scratch matrix used to transform light vectors into View Space.
-     * This is a copy of the camera's View Matrix with the translation component removed.
-     */
-    private final Matrix4f auxViewRotationOnly = new Matrix4f();
 
     /**
      * The vertex attribute location for the Lightmap UV coordinates (Block/Sky light).
@@ -134,10 +79,24 @@ public class VxVanillaRenderer {
         // 2. Prepare the custom shader program.
         VxVanillaExtendedShader shader = VelGFX.getShaderManager().getVanillaExtendedShader();
 
+        // 3. Acquire Scratch Objects from Cache.
+        // This avoids creating new Matrix4f/Vector3f objects every frame, eliminating GC pressure.
+        VxTempCache cache = VxTempCache.get();
+        Matrix4f auxModel = cache.mat4_1;
+        Matrix4f auxModelView = cache.mat4_2;
+        Matrix4f auxInverseView = cache.mat4_3;
+        Matrix4f auxViewRotationOnly = cache.mat4_4;
+
+        Matrix3f auxNormalMat = cache.mat3_1;
+        Vector3f auxLight0 = cache.vec3_1;
+        Vector3f auxLight1 = cache.vec3_2;
+
+        FloatBuffer matrixBuffer = cache.floatBuffer16;
+
         try {
             shader.bind();
 
-            // 3. Upload standard environment uniforms.
+            // 4. Upload standard environment uniforms.
             // These values define global fog settings and projection parameters.
             shader.setUniform("ProjMat", projMatrix);
             shader.setUniform("ColorModulator", RenderSystem.getShaderColor());
@@ -146,7 +105,7 @@ public class VxVanillaRenderer {
             shader.setUniform("FogColor", RenderSystem.getShaderFogColor());
             shader.setUniform("FogShape", RenderSystem.getShaderFogShape().getIndex());
 
-            // 4. Calculate Dynamic Lighting Directions.
+            // 5. Calculate Dynamic Lighting Directions.
             // We determine the sun's position based on the current world time.
             // This ensures specular highlights on blocks align with the celestial bodies.
             float sunAngle = 0.0f;
@@ -182,7 +141,7 @@ public class VxVanillaRenderer {
             // This ensures that meshes without vertex colors aren't tinted unexpectedly.
             GL30.glVertexAttrib4f(1, 1.0f, 1.0f, 1.0f, 1.0f);
 
-            // 5. Configure Global Textures.
+            // 6. Configure Global Textures.
             // These textures are bound once per batch as they usually don't change per object.
 
             // Unit 1: Overlay Texture (Used for damage tinting / red flash).
@@ -206,7 +165,7 @@ public class VxVanillaRenderer {
             GL13.glActiveTexture(GL13.GL_TEXTURE0);
             shader.setUniform("Sampler0", 0);
 
-            // 6. Set up Render State for Translucency.
+            // 7. Set up Render State for Translucency.
             if (translucent) {
                 // For translucent objects (water, stained glass), we enable alpha blending
                 // and disable depth writing to prevent occlusion artifacts.
@@ -234,11 +193,11 @@ public class VxVanillaRenderer {
                 VxMaterial mat = store.frameMaterials.get(store.materialIndices[ptr]);
 
                 // 1. Compute ModelView Matrix.
-                // We retrieve the Model Matrix from the store and multiply it with the Camera View Matrix.
-                MATRIX_BUFFER_16.clear();
-                MATRIX_BUFFER_16.put(store.modelMatrices, ptr * 16, 16);
-                MATRIX_BUFFER_16.flip();
-                auxModel.set(MATRIX_BUFFER_16);
+                // Retrieve Model Matrix from store into buffer
+                matrixBuffer.clear();
+                matrixBuffer.put(store.modelMatrices, ptr * 16, 16);
+                matrixBuffer.flip();
+                auxModel.set(matrixBuffer);
 
                 // Calculation: ModelView = View * Model
                 auxModelView.set(viewMatrix).mul(auxModel);
@@ -250,9 +209,9 @@ public class VxVanillaRenderer {
                 auxInverseView.set(auxModelView).invert().transpose();
                 auxInverseView.get3x3(auxNormalMat);
 
-                MATRIX_BUFFER_9.clear();
-                auxNormalMat.get(MATRIX_BUFFER_9);
-                GL20.glUniformMatrix3fv(locNormalMat, false, MATRIX_BUFFER_9);
+                matrixBuffer.clear();
+                auxNormalMat.get(matrixBuffer);
+                GL20.glUniformMatrix3fv(locNormalMat, false, matrixBuffer);
 
                 // 3. Bind Mesh Geometry.
                 // Only bind the VAO and EBO if they differ from the previously bound mesh.
@@ -276,8 +235,6 @@ public class VxVanillaRenderer {
                 GL30.glVertexAttribI2i(AT_UV2, packedLight & 0xFFFF, packedLight >> 16);
 
                 // 5. Apply Material Properties.
-                VxRenderType type = mat.renderType;
-
                 // Handle Face Culling (Double-Sided vs Single-Sided).
                 boolean shouldCull = !mat.doubleSided;
                 if (shouldCull != isCullingEnabled) {
@@ -287,7 +244,7 @@ public class VxVanillaRenderer {
                 }
 
                 // Update Alpha Cutoff based on render type.
-                if (type == VxRenderType.CUTOUT) {
+                if (mat.renderType == VxRenderType.CUTOUT) {
                     shader.setUniform("AlphaCutoff", mat.alphaCutoff);
                 } else if (!translucent) {
                     // Reset cutoff for standard opaque materials if we switched context.

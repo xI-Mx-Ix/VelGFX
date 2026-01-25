@@ -13,9 +13,9 @@ import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.VxIndexBuffer;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
 import net.xmx.velgfx.renderer.gl.state.VxBlendMode;
+import net.xmx.velgfx.renderer.util.VxTempCache;
 import org.joml.Matrix3f;
 import org.joml.Matrix4f;
-import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.*;
 
 import java.nio.FloatBuffer;
@@ -34,44 +34,6 @@ import java.nio.FloatBuffer;
  * @author xI-Mx-Ix
  */
 public class VxIrisRenderer {
-
-    /**
-     * A direct float buffer used for uploading 4x4 matrices (16 floats) to the GPU.
-     */
-    private static final FloatBuffer MATRIX_BUFFER_16 = BufferUtils.createFloatBuffer(16);
-
-    /**
-     * A direct float buffer used for uploading 3x3 matrices (9 floats) to the GPU.
-     */
-    private static final FloatBuffer MATRIX_BUFFER_9 = BufferUtils.createFloatBuffer(9);
-
-    /**
-     * Scratch matrix for holding the raw Model Matrix of the current object.
-     */
-    private final Matrix4f auxModel = new Matrix4f();
-
-    /**
-     * Scratch matrix for the combined Model-View Matrix (View * Model).
-     */
-    private final Matrix4f auxModelView = new Matrix4f();
-
-    /**
-     * Scratch matrix holding the raw Normal Matrix retrieved from the data store.
-     * This represents the object's rotation/scaling relative to the world.
-     */
-    private final Matrix3f auxNormalMat = new Matrix3f();
-
-    /**
-     * The final Normal Matrix transformed into View Space.
-     * Calculated as: {@code ViewRotation * ObjectNormalMatrix}.
-     */
-    private final Matrix3f auxNormalView = new Matrix3f();
-
-    /**
-     * A 3x3 matrix representing only the rotation component of the Camera View Matrix.
-     * Used to rotate normals from World Space to View Space.
-     */
-    private final Matrix3f auxViewRot = new Matrix3f();
 
     /**
      * The vertex attribute location for the Lightmap UV coordinates.
@@ -160,6 +122,17 @@ public class VxIrisRenderer {
             RenderSystem.depthMask(true);
         }
 
+        // 5. Acquire Scratch Objects from Cache.
+        // This prevents GC churn during matrix operations.
+        VxTempCache cache = VxTempCache.get();
+        Matrix4f auxModel = cache.mat4_1;
+        Matrix4f auxModelView = cache.mat4_2;
+        Matrix3f auxNormalMat = cache.mat3_1;
+        Matrix3f auxNormalView = cache.mat3_2;
+        Matrix3f auxViewRot = cache.mat3_2;
+
+        FloatBuffer matrixBuffer = cache.floatBuffer16;
+
         try {
             int currentVao = -1;
             int currentEbo = -1;
@@ -177,17 +150,17 @@ public class VxIrisRenderer {
                 // 1. Calculate Matrices.
 
                 // ModelView Matrix: View * Model
-                MATRIX_BUFFER_16.clear();
-                MATRIX_BUFFER_16.put(store.modelMatrices, ptr * 16, 16);
-                MATRIX_BUFFER_16.flip();
-                auxModel.set(MATRIX_BUFFER_16);
+                matrixBuffer.clear();
+                matrixBuffer.put(store.modelMatrices, ptr * 16, 16);
+                matrixBuffer.flip();
+                auxModel.set(matrixBuffer);
                 auxModelView.set(viewMatrix).mul(auxModel);
 
                 // Normal Matrix: ViewRotation * StoredNormalMatrix
-                MATRIX_BUFFER_9.clear();
-                MATRIX_BUFFER_9.put(store.normalMatrices, ptr * 9, 9);
-                MATRIX_BUFFER_9.flip();
-                auxNormalMat.set(MATRIX_BUFFER_9);
+                matrixBuffer.clear();
+                matrixBuffer.put(store.normalMatrices, ptr * 9, 9);
+                matrixBuffer.flip();
+                auxNormalMat.set(matrixBuffer);
 
                 auxNormalView.set(auxViewRot).mul(auxNormalMat);
 
@@ -199,10 +172,10 @@ public class VxIrisRenderer {
                 // Upload Normal Matrix (if we found a compatible uniform location during analysis).
                 // This allows the shader pack to receive correct normal data.
                 if (this.locNormalMat != -1) {
-                    MATRIX_BUFFER_9.clear();
-                    auxNormalView.get(MATRIX_BUFFER_9);
-                    MATRIX_BUFFER_9.flip();
-                    RenderSystem.glUniformMatrix3(this.locNormalMat, false, MATRIX_BUFFER_9);
+                    matrixBuffer.clear();
+                    auxNormalView.get(matrixBuffer);
+                    matrixBuffer.flip();
+                    RenderSystem.glUniformMatrix3(this.locNormalMat, false, matrixBuffer);
                 }
 
                 // 2. Bind Mesh Geometry.
