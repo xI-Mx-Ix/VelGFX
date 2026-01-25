@@ -14,7 +14,6 @@ import net.xmx.velgfx.renderer.gl.shader.impl.VxVanillaExtendedShader;
 import net.xmx.velgfx.renderer.gl.state.VxBlendMode;
 import net.xmx.velgfx.renderer.gl.state.VxRenderType;
 import net.xmx.velgfx.renderer.util.VxTempCache;
-import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.lwjgl.opengl.*;
