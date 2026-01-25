@@ -10,6 +10,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.ShaderInstance;
 import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.renderer.gl.VxGlState;
 import net.xmx.velgfx.renderer.gl.VxIndexBuffer;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
 import net.xmx.velgfx.renderer.gl.state.VxBlendMode;
@@ -88,6 +89,7 @@ public class VxIrisRenderer {
      * @param translucent {@code true} if rendering the translucent pass (enables blending).
      */
     public void render(VxRenderDataStore store, VxRenderDataStore.IntList bucket, Matrix4f viewMatrix, Matrix4f projMatrix, boolean translucent) {
+        VxGlState.saveCurrentState();
         // 1. Snapshot the current OpenGL texture state.
         // We use the shared utility method from VxRenderPipeline since this logic is identical
         // to the Vanilla pipeline. This ensures we don't break Minecraft's internal rendering state.
@@ -249,6 +251,8 @@ public class VxIrisRenderer {
 
             // Restore original texture bindings using the shared utility method.
             VxRenderPipeline.getInstance().restoreTextureState(savedTextureState);
+
+            VxGlState.restorePreviousState();
         }
     }
 
