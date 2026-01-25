@@ -40,9 +40,9 @@ public class VxVanillaExtendedShader extends VxShaderProgram {
     @Override
     protected void registerUniforms() {
         // Transformation Matrices
-        createUniform("ModelViewMat");
-        createUniform("ProjMat");
-        createUniform("NormalMat");
+        createUniform("ViewMat");   // Global View Matrix (set once per frame)
+        createUniform("ModelMat");  // Per-Object Model Matrix
+        createUniform("ProjMat");   // Projection Matrix
 
         // Texture Samplers
         createUniform("Sampler0"); // Albedo

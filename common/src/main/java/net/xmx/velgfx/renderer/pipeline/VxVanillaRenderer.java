@@ -82,15 +82,9 @@ public class VxVanillaRenderer {
         // 3. Acquire Scratch Objects from Cache.
         // This avoids creating new Matrix4f/Vector3f objects every frame, eliminating GC pressure.
         VxTempCache cache = VxTempCache.get();
-        Matrix4f auxModel = cache.mat4_1;
-        Matrix4f auxModelView = cache.mat4_2;
-        Matrix4f auxInverseView = cache.mat4_3;
         Matrix4f auxViewRotationOnly = cache.mat4_4;
-
-        Matrix3f auxNormalMat = cache.mat3_1;
         Vector3f auxLight0 = cache.vec3_1;
         Vector3f auxLight1 = cache.vec3_2;
-
         FloatBuffer matrixBuffer = cache.floatBuffer16;
 
         try {
@@ -99,6 +93,11 @@ public class VxVanillaRenderer {
             // 4. Upload standard environment uniforms.
             // These values define global fog settings and projection parameters.
             shader.setUniform("ProjMat", projMatrix);
+
+            // Upload the View Matrix globally. The shader will combine this with
+            // the per-object Model Matrix to create the ModelView Matrix.
+            shader.setUniform("ViewMat", viewMatrix);
+
             shader.setUniform("ColorModulator", RenderSystem.getShaderColor());
             shader.setUniform("FogStart", RenderSystem.getShaderFogStart());
             shader.setUniform("FogEnd", RenderSystem.getShaderFogEnd());
@@ -183,8 +182,8 @@ public class VxVanillaRenderer {
             int currentEbo = -1;
             boolean isCullingEnabled = true;
 
-            // Cache the uniform location for the Normal Matrix.
-            int locNormalMat = shader.getUniformLocation("NormalMat");
+            // Cache the uniform location for the Model Matrix to avoid lookups in the loop.
+            int locModelMat = shader.getUniformLocation("ModelMat");
 
             // --- Inner Render Loop ---
             // Iterate over all batched items in this bucket.
@@ -192,28 +191,16 @@ public class VxVanillaRenderer {
                 int ptr = bucket.data[i];
                 VxMaterial mat = store.frameMaterials.get(store.materialIndices[ptr]);
 
-                // 1. Compute ModelView Matrix.
-                // Retrieve Model Matrix from store into buffer
+                // 1. Upload Model Matrix.
+                // We transfer the raw Model Matrix data directly from the store to the shader.
+                // The shader performs the multiplication (View * Model) and Inverse-Transpose.
+                // This reduces CPU load significantly.
                 matrixBuffer.clear();
                 matrixBuffer.put(store.modelMatrices, ptr * 16, 16);
                 matrixBuffer.flip();
-                auxModel.set(matrixBuffer);
+                GL20.glUniformMatrix4fv(locModelMat, false, matrixBuffer);
 
-                // Calculation: ModelView = View * Model
-                auxModelView.set(viewMatrix).mul(auxModel);
-                shader.setUniform("ModelViewMat", auxModelView);
-
-                // 2. Compute Normal Matrix.
-                // To handle non-uniform scaling correctly, we must use the Inverse-Transpose
-                // of the ModelView matrix. This ensures lighting normals remain perpendicular to surfaces.
-                auxInverseView.set(auxModelView).invert().transpose();
-                auxInverseView.get3x3(auxNormalMat);
-
-                matrixBuffer.clear();
-                auxNormalMat.get(matrixBuffer);
-                GL20.glUniformMatrix3fv(locNormalMat, false, matrixBuffer);
-
-                // 3. Bind Mesh Geometry.
+                // 2. Bind Mesh Geometry.
                 // Only bind the VAO and EBO if they differ from the previously bound mesh.
                 int vao = store.vaoIds[ptr];
                 int ebo = store.eboIds[ptr];
@@ -228,13 +215,13 @@ public class VxVanillaRenderer {
                     currentEbo = ebo;
                 }
 
-                // 4. Set Lightmap Coordinates.
+                // 3. Set Lightmap Coordinates.
                 // These are passed as a custom integer attribute (Index 4).
                 GL30.glDisableVertexAttribArray(AT_UV2);
                 int packedLight = store.packedLights[ptr];
                 GL30.glVertexAttribI2i(AT_UV2, packedLight & 0xFFFF, packedLight >> 16);
 
-                // 5. Apply Material Properties.
+                // 4. Apply Material Properties.
                 // Handle Face Culling (Double-Sided vs Single-Sided).
                 boolean shouldCull = !mat.doubleSided;
                 if (shouldCull != isCullingEnabled) {
@@ -254,7 +241,7 @@ public class VxVanillaRenderer {
                 // Apply custom blending mode if defined by the material.
                 mat.blendMode.apply();
 
-                // 6. Bind Material Textures.
+                // 5. Bind Material Textures.
 
                 // Unit 0: Albedo Texture (Base Color).
                 GL13.glActiveTexture(GL13.GL_TEXTURE0);
@@ -271,7 +258,7 @@ public class VxVanillaRenderer {
                 // Reset active texture unit to 0 for the draw call.
                 GL13.glActiveTexture(GL13.GL_TEXTURE0);
 
-                // 7. Issue Draw Call.
+                // 6. Issue Draw Call.
                 GL32.glDrawElementsBaseVertex(
                         GL30.GL_TRIANGLES,
                         store.indexCounts[ptr],
