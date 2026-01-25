@@ -24,28 +24,51 @@ import java.util.Map;
 public class VxGltfStructure {
 
     /**
-     * Flattens the scene hierarchy and builds the master skeleton.
+     * Flattens the recursive node hierarchy into a linear list using Pre-Order Traversal.
      * <p>
-     * This method traverses the node tree, extracts topological order and bind poses,
+     * This guarantees the topological order required for SoA matrix updates, ensuring that
+     * parents always appear in the list before their children.
+     *
+     * @param rootNodes The list of root nodes of the glTF scene.
+     * @return A flat list containing all nodes in the hierarchy.
+     */
+    public static List<NodeModel> flatten(List<NodeModel> rootNodes) {
+        List<NodeModel> flatList = new ArrayList<>();
+        for (NodeModel root : rootNodes) {
+            flattenRecursive(root, flatList);
+        }
+        return flatList;
+    }
+
+    /**
+     * Recursive helper for the flattening process.
+     *
+     * @param node The current node.
+     * @param list The accumulator list.
+     */
+    private static void flattenRecursive(NodeModel node, List<NodeModel> list) {
+        list.add(node);
+        for (NodeModel child : node.getChildren()) {
+            flattenRecursive(child, list);
+        }
+    }
+
+    /**
+     * Builds the master skeleton from an already flattened list of nodes.
+     * <p>
+     * This method traverses the provided linear list, extracts topological order and bind poses,
      * applies any provided inverse bind matrices, and returns a fully initialized
      * {@link VxSkeleton} instance containing all static data.
      *
-     * @param rootNode The root node of the glTF scene (or sub-scene).
+     * @param flatList The linear list of nodes. The index in this list becomes the bone index.
      * @param boneDefs Extracted inverse bind matrices (optional, for skinned models).
      * @return The master skeleton instance.
      */
-    public static VxSkeleton buildSkeleton(NodeModel rootNode, List<BoneDefinition> boneDefs) {
-        List<NodeModel> flatList = new ArrayList<>();
+    public static VxSkeleton buildSkeleton(List<NodeModel> flatList, List<BoneDefinition> boneDefs) {
+        int count = flatList.size();
         Map<NodeModel, Integer> nodeToIndex = new HashMap<>();
 
-        // Flatten via Pre-Order Traversal.
-        // IMPORTANT: Pre-order traversal guarantees that a parent node is always visited
-        // added to the list BEFORE its children. This fulfills the Topological Sort requirement.
-        flattenRecursive(rootNode, flatList);
-
-        int count = flatList.size();
-
-        // Map nodes to their new linear indices
+        // Map nodes to their new linear indices for parent lookup
         for (int i = 0; i < count; i++) {
             nodeToIndex.put(flatList.get(i), i);
         }
@@ -75,6 +98,8 @@ public class VxGltfStructure {
                     : -1;
 
             // 2. Names
+            // If a node has no name in the glTF file, generate a unique one based on the index.
+            // This ensures the Skeleton names array contains no nulls.
             names[i] = node.getName() != null ? node.getName() : "Node_" + i;
 
             // 3. Bind Pose (Local TRS)
@@ -117,9 +142,10 @@ public class VxGltfStructure {
         // 4. Populate Inverse Bind Matrices (if provided)
         if (boneDefs != null) {
             for (BoneDefinition def : boneDefs) {
-                // Find matching node index by name
+                // Match definition by node name in the flat list
                 for (int i = 0; i < count; i++) {
-                    if (names[i].equals(def.name)) {
+                    String currentNodeName = flatList.get(i).getName();
+                    if (currentNodeName != null && currentNodeName.equals(def.name)) {
                         def.offsetMatrix.get(ibm, i * 16);
                         break;
                     }
@@ -132,17 +158,7 @@ public class VxGltfStructure {
     }
 
     /**
-     * Recursively traverses the node tree pre-order.
-     */
-    private static void flattenRecursive(NodeModel node, List<NodeModel> list) {
-        list.add(node);
-        for (NodeModel child : node.getChildren()) {
-            flattenRecursive(child, list);
-        }
-    }
-
-    /**
-     * Temporary structure used during skin loading.
+     * Temporary structure used during skin loading to hold inverse bind matrices.
      */
     public record BoneDefinition(int id, String name, Matrix4f offsetMatrix) {
     }
