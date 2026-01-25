@@ -69,11 +69,134 @@ public class VxGltfGeometry {
     }
 
     /**
-     * Processes geometry for a skinned model (Skeletal Animation).
-     * Uses {@link VxSkinnedVertexLayout} (Full floats for all attributes).
+     * Processes geometry for a skinned model, including vertex baking.
+     * <p>
+     * Reads all vertex attributes and interleaves them into a single ByteBuffer according to the
+     * {@link VxSkinnedVertexLayout}.
+     * <p>
+     * <b>Vertex Baking:</b> If {@code jointBakeMap} is provided, the joint indices read from the
+     * glTF accessors are immediately remapped. This replaces the local skin index with the
+     * absolute skeleton index, allowing the shader to access the global matrix array directly.
+     *
+     * @param model        The glTF model source.
+     * @param materials    The list of parsed materials.
+     * @param outCommands  The list to populate with draw commands.
+     * @param jointBakeMap The lookup table for remapping joint indices (Skin Index -> Skeleton Index).
+     * @return The packed vertex and index buffers.
      */
-    public static GeometryResult processSkinnedGeometry(GltfModel model, List<VxMaterial> materials, List<VxDrawCommand> outCommands, List<VxGltfStructure.BoneDefinition> boneDefs) {
-        return processInternal(model, materials, outCommands, true, boneDefs);
+    public static GeometryResult processSkinnedGeometry(GltfModel model, List<VxMaterial> materials, List<VxDrawCommand> outCommands, int[] jointBakeMap) {
+        // 1. Calculate Buffer Size
+        int totalVertices = 0;
+        int totalIndices = 0;
+
+        for (MeshModel mesh : model.getMeshModels()) {
+            for (MeshPrimitiveModel primitive : mesh.getMeshPrimitiveModels()) {
+                AccessorModel positionAccessor = primitive.getAttributes().get("POSITION");
+                if (positionAccessor != null) {
+                    totalVertices += positionAccessor.getCount();
+                }
+                AccessorModel indexAccessor = primitive.getIndices();
+                if (indexAccessor != null) {
+                    totalIndices += indexAccessor.getCount();
+                }
+            }
+        }
+
+        // 2. Allocate Direct Memory
+        ByteBuffer vertexBuffer = ByteBuffer.allocateDirect(totalVertices * VxSkinnedVertexLayout.STRIDE).order(ByteOrder.nativeOrder());
+        ByteBuffer indexBuffer = ByteBuffer.allocateDirect(totalIndices * VxIndexBuffer.BYTES_PER_INDEX).order(ByteOrder.nativeOrder());
+
+        int vertexOffset = 0;
+        long indexOffsetBytes = 0;
+
+        // 3. Process Primitives
+        for (MeshModel mesh : model.getMeshModels()) {
+            for (MeshPrimitiveModel primitive : mesh.getMeshPrimitiveModels()) {
+                // Determine Material
+                int materialIndex = model.getMaterialModels().indexOf(primitive.getMaterialModel());
+                VxMaterial material = (materialIndex >= 0 && materialIndex < materials.size())
+                        ? materials.get(materialIndex)
+                        : materials.get(0);
+
+                int[] indices = VxGltfAccessorUtil.readAccessorAsInts(primitive.getIndices());
+
+                // Read Raw Attributes
+                AttributeData attributes = readAndProcessAttributes(primitive, indices);
+
+                // Rewrite the joint indices in the attribute array using the bake map.
+                if (jointBakeMap != null && attributes.joints != null) {
+                    for (int k = 0; k < attributes.joints.length; k++) {
+                        int originalSkinIndex = attributes.joints[k];
+                        if (originalSkinIndex >= 0 && originalSkinIndex < jointBakeMap.length) {
+                            attributes.joints[k] = jointBakeMap[originalSkinIndex];
+                        } else {
+                            // Fallback for invalid indices
+                            attributes.joints[k] = 0;
+                        }
+                    }
+                }
+
+                // Interleave data into the vertex buffer
+                for (int i = 0; i < attributes.vertexCount; i++) {
+                    // Position (vec3)
+                    vertexBuffer.putFloat(attributes.positions[i * 3])
+                            .putFloat(attributes.positions[i * 3 + 1])
+                            .putFloat(attributes.positions[i * 3 + 2]);
+
+                    // UV0 (vec2)
+                    if (attributes.uvs != null) {
+                        vertexBuffer.putFloat(attributes.uvs[i * 2]).putFloat(attributes.uvs[i * 2 + 1]);
+                    } else {
+                        vertexBuffer.putFloat(0f).putFloat(0f);
+                    }
+
+                    // Normal (vec3)
+                    vertexBuffer.putFloat(attributes.normals[i * 3])
+                            .putFloat(attributes.normals[i * 3 + 1])
+                            .putFloat(attributes.normals[i * 3 + 2]);
+
+                    // Tangent (vec4)
+                    vertexBuffer.putFloat(attributes.tangents[i * 4])
+                            .putFloat(attributes.tangents[i * 4 + 1])
+                            .putFloat(attributes.tangents[i * 4 + 2])
+                            .putFloat(attributes.tangents[i * 4 + 3]);
+
+                    // Weights (vec4)
+                    if (attributes.weights != null) {
+                        vertexBuffer.putFloat(attributes.weights[i * 4])
+                                .putFloat(attributes.weights[i * 4 + 1])
+                                .putFloat(attributes.weights[i * 4 + 2])
+                                .putFloat(attributes.weights[i * 4 + 3]);
+                    } else {
+                        vertexBuffer.putFloat(0f).putFloat(0f).putFloat(0f).putFloat(0f);
+                    }
+
+                    // Joints (vec4) - Now contains global Skeleton indices
+                    if (attributes.joints != null) {
+                        vertexBuffer.putFloat((float) attributes.joints[i * 4])
+                                .putFloat((float) attributes.joints[i * 4 + 1])
+                                .putFloat((float) attributes.joints[i * 4 + 2])
+                                .putFloat((float) attributes.joints[i * 4 + 3]);
+                    } else {
+                        vertexBuffer.putFloat(0f).putFloat(0f).putFloat(0f).putFloat(0f);
+                    }
+                }
+
+                // Write Indices
+                for (int idx : indices) {
+                    indexBuffer.putInt(idx);
+                }
+
+                outCommands.add(new VxDrawCommand(material, indices.length, indexOffsetBytes, vertexOffset));
+
+                vertexOffset += attributes.vertexCount;
+                indexOffsetBytes += (long) indices.length * VxIndexBuffer.BYTES_PER_INDEX;
+            }
+        }
+
+        vertexBuffer.flip();
+        indexBuffer.flip();
+        return new GeometryResult(vertexBuffer, indexBuffer);
     }
 
     /**

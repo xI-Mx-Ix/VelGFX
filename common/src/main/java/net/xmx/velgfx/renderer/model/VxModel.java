@@ -9,7 +9,7 @@ import net.xmx.velgfx.renderer.gl.mesh.IVxRenderableMesh;
 import net.xmx.velgfx.renderer.model.animation.VxAnimation;
 import net.xmx.velgfx.renderer.model.animation.VxAnimator;
 import net.xmx.velgfx.renderer.model.morph.VxMorphController;
-import net.xmx.velgfx.renderer.model.skeleton.VxNode;
+import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
 import net.xmx.velgfx.renderer.model.skeleton.VxSocket;
 import org.joml.Matrix4f;
 
@@ -18,21 +18,21 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Represents the abstract base for 3D models in the engine.
+ * Represents the abstract base for 3D models in the engine using the SoA architecture.
  * <p>
- * A model acts as a container for:
+ * A model aggregates:
  * <ul>
- *     <li><b>Geometry:</b> Handled by {@link IVxRenderableMesh} (VBO/VAO).</li>
- *     <li><b>Hierarchy:</b> A root {@link VxNode} representing the scene graph.</li>
- *     <li><b>Animations:</b> A library of available clips.</li>
- *     <li><b>Sockets:</b> Defined attachment points linked to specific nodes (bones) for equipping items or attachments.</li>
+ *     <li>A {@link VxSkeleton} (SoA Runtime State).</li>
+ *     <li>A {@link IVxRenderableMesh} (GPU Geometry).</li>
+ *     <li>A {@link VxAnimator} (Animation Engine).</li>
+ *     <li>A collection of {@link VxSocket}s (Attachments).</li>
  * </ul>
  *
  * @author xI-Mx-Ix
  */
 public abstract class VxModel {
 
-    protected final VxNode rootNode;
+    protected final VxSkeleton skeleton;
     protected final IVxRenderableMesh mesh;
     protected final Map<String, VxAnimation> animations;
     protected final VxAnimator animator;
@@ -45,30 +45,27 @@ public abstract class VxModel {
     /**
      * Constructs a base model.
      *
-     * @param rootNode   The root of the scene hierarchy.
-     * @param mesh       The renderable mesh resource.
-     * @param animations The map of animation clips.
-     * @param morphController The controller for morph targets.
+     * @param skeleton        The runtime skeleton instance.
+     * @param mesh            The geometry mesh.
+     * @param animations      The available animations map.
+     * @param morphController The morph controller (optional).
      */
-    protected VxModel(VxNode rootNode, IVxRenderableMesh mesh, Map<String, VxAnimation> animations, VxMorphController morphController) {
-        this.rootNode = rootNode;
+    protected VxModel(VxSkeleton skeleton, IVxRenderableMesh mesh, Map<String, VxAnimation> animations, VxMorphController morphController) {
+        this.skeleton = skeleton;
         this.mesh = mesh;
         this.animations = animations != null ? animations : Collections.emptyMap();
-        this.animator = new VxAnimator(rootNode, morphController);
+        this.animator = new VxAnimator(skeleton, morphController);
     }
 
     /**
-     * Updates the animation state of this model and any attached models.
-     * <p>
-     * This advances the animator's time cursor and recalculates the node hierarchy
-     * matrices. It then propagates the update to all models currently attached to sockets.
+     * Updates the animation state and propagates updates to attachments.
      *
      * @param dt Delta time in seconds.
      */
     public void update(float dt) {
         animator.update(dt);
 
-        // Propagate update to attached models (e.g., weapons, equipment)
+        // Update attachments
         for (VxSocket socket : sockets.values()) {
             if (socket.getAttachedModel() != null) {
                 socket.getAttachedModel().update(dt);
@@ -77,47 +74,36 @@ public abstract class VxModel {
     }
 
     /**
-     * Renders the model into the pipeline.
-     * <p>
-     * Implementations must ensure that {@link #renderAttachments(PoseStack, int)} is called
-     * to draw any objects attached to sockets.
+     * Renders the model.
      *
-     * @param poseStack   The current transformation stack.
-     * @param packedLight The packed light value.
+     * @param poseStack   The current matrix stack.
+     * @param packedLight The light value.
      */
     public abstract void render(PoseStack poseStack, int packedLight);
 
     /**
-     * Renders all attached models on their respective sockets.
-     * <p>
-     * This iterates through all defined sockets, applies the global transform of the
-     * parent bone, and renders the attached model in the correct position and orientation.
-     *
-     * @param poseStack   The current transformation stack.
-     * @param packedLight The packed light value.
+     * Helper to render all active sockets.
      */
     protected void renderAttachments(PoseStack poseStack, int packedLight) {
-        if (!sockets.isEmpty()) {
-            for (VxSocket socket : sockets.values()) {
-                socket.render(poseStack, packedLight);
-            }
+        for (VxSocket socket : sockets.values()) {
+            socket.render(poseStack, packedLight);
         }
     }
 
     /**
-     * Creates and registers a new attachment socket on a specific bone/node.
+     * Creates and registers a new attachment socket on a specific bone.
      *
-     * @param socketName The unique identifier for this socket (e.g., "Hand_R_Weapon").
-     * @param boneName   The name of the node (bone) to attach to (e.g., "Hand_R").
-     * @param offset     An optional local offset matrix relative to the bone. Passing null results in an identity transform.
-     * @return The created socket, or null if the specified bone name was not found in the hierarchy.
+     * @param socketName The unique identifier for this socket.
+     * @param boneName   The name of the bone to attach to.
+     * @param offset     Optional local offset matrix.
+     * @return The created socket, or null if the bone name is invalid.
      */
     public VxSocket createSocket(String socketName, String boneName, Matrix4f offset) {
-        VxNode targetNode = rootNode.findByName(boneName);
-        if (targetNode == null) {
-            return null;
-        }
-        VxSocket socket = new VxSocket(socketName, targetNode, offset);
+        // Resolve bone name to index using the skeleton definition
+        int index = skeleton.indexOf(boneName);
+        if (index == -1) return null;
+
+        VxSocket socket = new VxSocket(socketName, skeleton, index, offset);
         sockets.put(socketName, socket);
         return socket;
     }
@@ -136,24 +122,19 @@ public abstract class VxModel {
     }
 
     /**
-     * Starts playing the specified animation immediately.
-     * <p>
-     * This switches the animator to the target animation instantly without blending.
+     * Plays an animation immediately.
      *
-     * @param name The name of the animation clip.
+     * @param name The animation name.
      */
     public void playAnimation(String name) {
         playAnimation(name, 0.0f);
     }
 
     /**
-     * Starts playing the specified animation with a blend transition.
-     * <p>
-     * The animator will cross-fade from the current state to the new animation
-     * over the specified duration.
+     * Plays an animation with blending.
      *
-     * @param name           The name of the animation clip.
-     * @param transitionTime The time in seconds to blend from the current animation to the new one.
+     * @param name           The animation name.
+     * @param transitionTime Blend duration in seconds.
      */
     public void playAnimation(String name, float transitionTime) {
         VxAnimation anim = animations.get(name);
@@ -163,13 +144,9 @@ public abstract class VxModel {
     }
 
     /**
-     * Creates an independent instance of this model.
-     * <p>
-     * The new instance shares heavy GPU resources (Mesh/Textures) but possesses
-     * its own Scene Graph (Nodes/Skeleton) and Animator. This allows the instance
-     * to play animations independently of others.
+     * Creates a new independent instance of this model (new Skeleton, shared Mesh).
      *
-     * @return A new model instance.
+     * @return A new instance.
      */
     public abstract VxModel createInstance();
 
@@ -190,8 +167,8 @@ public abstract class VxModel {
         }
     }
 
-    public VxNode getRootNode() {
-        return rootNode;
+    public VxSkeleton getSkeleton() {
+        return skeleton;
     }
 
     public IVxRenderableMesh getMesh() {

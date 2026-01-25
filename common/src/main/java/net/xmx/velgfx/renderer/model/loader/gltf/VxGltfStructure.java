@@ -4,15 +4,11 @@
  */
 package net.xmx.velgfx.renderer.model.loader.gltf;
 
-import de.javagl.jgltf.model.GltfModel;
-import de.javagl.jgltf.model.MeshModel;
 import de.javagl.jgltf.model.NodeModel;
-import de.javagl.jgltf.model.SceneModel;
-import net.xmx.velgfx.renderer.gl.VxDrawCommand;
-import net.xmx.velgfx.renderer.model.skeleton.VxBone;
-import net.xmx.velgfx.renderer.model.skeleton.VxNode;
+import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
+import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -20,142 +16,134 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Helper class to Translate the glTF Node hierarchy into the engine's internal structure.
+ * Helper class to flatten the glTF recursive Node hierarchy into the linear, topological
+ * SoA structure required by {@link VxSkeleton}.
  *
  * @author xI-Mx-Ix
  */
 public class VxGltfStructure {
 
     /**
-     * Temporary definition of a bone structure used during the loading phase.
+     * Flattens the scene hierarchy and builds the master skeleton.
+     * <p>
+     * This method traverses the node tree, extracts topological order and bind poses,
+     * applies any provided inverse bind matrices, and returns a fully initialized
+     * {@link VxSkeleton} instance containing all static data.
+     *
+     * @param rootNode The root node of the glTF scene (or sub-scene).
+     * @param boneDefs Extracted inverse bind matrices (optional, for skinned models).
+     * @return The master skeleton instance.
+     */
+    public static VxSkeleton buildSkeleton(NodeModel rootNode, List<BoneDefinition> boneDefs) {
+        List<NodeModel> flatList = new ArrayList<>();
+        Map<NodeModel, Integer> nodeToIndex = new HashMap<>();
+
+        // Flatten via Pre-Order Traversal.
+        // IMPORTANT: Pre-order traversal guarantees that a parent node is always visited
+        // added to the list BEFORE its children. This fulfills the Topological Sort requirement.
+        flattenRecursive(rootNode, flatList);
+
+        int count = flatList.size();
+
+        // Map nodes to their new linear indices
+        for (int i = 0; i < count; i++) {
+            nodeToIndex.put(flatList.get(i), i);
+        }
+
+        // Allocate definition arrays
+        int[] parentIndices = new int[count];
+        String[] names = new String[count];
+        float[] ibm = new float[count * 16];
+        float[] refPos = new float[count * 3];
+        float[] refRot = new float[count * 4];
+        float[] refScale = new float[count * 3];
+
+        // Fill IBM with identity initially (for non-skinning nodes)
+        Matrix4f identity = new Matrix4f();
+        for (int i = 0; i < count; i++) {
+            identity.get(ibm, i * 16);
+        }
+
+        // Populate Arrays
+        for (int i = 0; i < count; i++) {
+            NodeModel node = flatList.get(i);
+
+            // 1. Topology
+            NodeModel parent = node.getParent();
+            parentIndices[i] = (parent != null && nodeToIndex.containsKey(parent))
+                    ? nodeToIndex.get(parent)
+                    : -1;
+
+            // 2. Names
+            names[i] = node.getName() != null ? node.getName() : "Node_" + i;
+
+            // 3. Bind Pose (Local TRS)
+            float[] t = node.getTranslation();
+            float[] r = node.getRotation();
+            float[] s = node.getScale();
+            float[] m = node.getMatrix();
+
+            Vector3f pos = new Vector3f();
+            Quaternionf rot = new Quaternionf();
+            Vector3f scale = new Vector3f(1, 1, 1);
+
+            if (m != null) {
+                // Decompose matrix
+                Matrix4f tempMat = new Matrix4f().set(m);
+                tempMat.getTranslation(pos);
+                tempMat.getUnnormalizedRotation(rot);
+                tempMat.getScale(scale);
+            } else {
+                if (t != null) pos.set(t[0], t[1], t[2]);
+                if (r != null) rot.set(r[0], r[1], r[2], r[3]);
+                if (s != null) scale.set(s[0], s[1], s[2]);
+            }
+
+            // Write to flattened arrays
+            refPos[i * 3] = pos.x;
+            refPos[i * 3 + 1] = pos.y;
+            refPos[i * 3 + 2] = pos.z;
+
+            refRot[i * 4] = rot.x;
+            refRot[i * 4 + 1] = rot.y;
+            refRot[i * 4 + 2] = rot.z;
+            refRot[i * 4 + 3] = rot.w;
+
+            refScale[i * 3] = scale.x;
+            refScale[i * 3 + 1] = scale.y;
+            refScale[i * 3 + 2] = scale.z;
+        }
+
+        // 4. Populate Inverse Bind Matrices (if provided)
+        if (boneDefs != null) {
+            for (BoneDefinition def : boneDefs) {
+                // Find matching node index by name
+                for (int i = 0; i < count; i++) {
+                    if (names[i].equals(def.name)) {
+                        def.offsetMatrix.get(ibm, i * 16);
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Return the skeleton directly via the Master Constructor
+        return new VxSkeleton(count, parentIndices, names, ibm, refPos, refRot, refScale);
+    }
+
+    /**
+     * Recursively traverses the node tree pre-order.
+     */
+    private static void flattenRecursive(NodeModel node, List<NodeModel> list) {
+        list.add(node);
+        for (NodeModel child : node.getChildren()) {
+            flattenRecursive(child, list);
+        }
+    }
+
+    /**
+     * Temporary structure used during skin loading.
      */
     public record BoneDefinition(int id, String name, Matrix4f offsetMatrix) {
-    }
-
-    /**
-     * Recursively processes a glTF Node into a VxNode.
-     * <p>
-     * Converts glTF TRS (Translation, Rotation, Scale) or Matrix definitions into
-     * a JOML Matrix4f.
-     *
-     * @param gltfNode The source node.
-     * @param parent   The parent VxNode (can be null for root).
-     * @return The constructed node hierarchy.
-     */
-    public static VxNode processNodeHierarchy(NodeModel gltfNode, VxNode parent) {
-        Matrix4f localTransform = new Matrix4f();
-        float[] matrixData = gltfNode.getMatrix();
-
-        if (matrixData != null) {
-            localTransform.set(matrixData);
-        } else {
-            float[] t = gltfNode.getTranslation();
-            float[] r = gltfNode.getRotation();
-            float[] s = gltfNode.getScale();
-
-            if (t != null) localTransform.translate(t[0], t[1], t[2]);
-            if (r != null) localTransform.rotate(new Quaternionf(r[0], r[1], r[2], r[3]));
-            if (s != null) localTransform.scale(s[0], s[1], s[2]);
-        }
-
-        String name = gltfNode.getName();
-        if (name == null || name.isEmpty()) {
-            name = "Node_" + gltfNode.hashCode();
-        }
-
-        VxNode node = new VxNode(name, parent, localTransform);
-
-        for (NodeModel child : gltfNode.getChildren()) {
-            node.addChild(processNodeHierarchy(child, node));
-        }
-        return node;
-    }
-
-    /**
-     * Maps flattened bone definitions to the actual Scene Nodes.
-     *
-     * @param definitions List of bone definitions extracted from the Skin.
-     * @param root        The root node of the hierarchy.
-     * @return The final list of runtime bones.
-     */
-    public static List<VxBone> buildSkeletonBones(List<BoneDefinition> definitions, VxNode root) {
-        List<VxBone> finalBones = new ArrayList<>();
-        for (BoneDefinition def : definitions) {
-            VxNode node = root.findByName(def.name);
-            if (node == null) {
-                // Fallback to root to prevent crash if bone node is missing in hierarchy
-                node = root;
-            }
-            finalBones.add(new VxBone(def.id, def.name, def.offsetMatrix, node));
-        }
-        return finalBones;
-    }
-
-    /**
-     * Creates a mapping of Node Names to Draw Commands.
-     * <p>
-     * This method reconstructs the relationship between the Scene Graph (Nodes) and the
-     * flat list of Draw Commands generated by the Geometry processor. It is essential for
-     * <b>Rigid Body Animation</b>, where specific mesh parts must move with specific nodes.
-     *
-     * @param model       The full glTF model (required to access mesh list in order).
-     * @param scene       The active scene model.
-     * @param allCommands The flat list of commands generated by {@link VxGltfGeometry}.
-     * @return A map where Key = Node Name, Value = List of Draw Commands for that node.
-     */
-    public static Map<String, List<VxDrawCommand>> mapNodesToCommands(GltfModel model, SceneModel scene, List<VxDrawCommand> allCommands) {
-        // 1. Group Commands by MeshModel
-        // VxGltfGeometry iterates: Model -> MeshModels -> Primitives.
-        // We must replicate this order exactly to assign commands to meshes correctly.
-        Map<MeshModel, List<VxDrawCommand>> meshToCommandsMap = new HashMap<>();
-        int globalCommandIndex = 0;
-
-        for (MeshModel mesh : model.getMeshModels()) {
-            List<VxDrawCommand> meshCommands = new ArrayList<>();
-            int primitiveCount = mesh.getMeshPrimitiveModels().size();
-
-            // Collect the next N commands for this mesh
-            for (int i = 0; i < primitiveCount; i++) {
-                if (globalCommandIndex < allCommands.size()) {
-                    meshCommands.add(allCommands.get(globalCommandIndex));
-                    globalCommandIndex++;
-                }
-            }
-            meshToCommandsMap.put(mesh, meshCommands);
-        }
-
-        // 2. Map Nodes to Mesh Commands
-        Map<String, List<VxDrawCommand>> result = new HashMap<>();
-
-        for (NodeModel node : scene.getNodeModels()) {
-            recursiveNodeMapping(node, meshToCommandsMap, result);
-        }
-
-        return result;
-    }
-
-    /**
-     * Recursively traverses the node tree to find Mesh attachments.
-     */
-    private static void recursiveNodeMapping(NodeModel node, Map<MeshModel, List<VxDrawCommand>> meshMap, Map<String, List<VxDrawCommand>> result) {
-        // Retrieve all meshes attached to this node (usually 0 or 1 in glTF 2.0)
-        for (MeshModel mesh : node.getMeshModels()) {
-            List<VxDrawCommand> cmds = meshMap.get(mesh);
-
-            if (cmds != null && !cmds.isEmpty()) {
-                String name = node.getName();
-                if (name == null || name.isEmpty()) {
-                    name = "Node_" + node.hashCode();
-                }
-
-                // If a node has multiple meshes, we aggregate their commands into the same list
-                result.computeIfAbsent(name, k -> new ArrayList<>()).addAll(cmds);
-            }
-        }
-
-        // Continue traversal
-        for (NodeModel child : node.getChildren()) {
-            recursiveNodeMapping(child, meshMap, result);
-        }
     }
 }

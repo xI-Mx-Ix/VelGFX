@@ -4,9 +4,7 @@
  */
 package net.xmx.velgfx.renderer.model.loader.gltf;
 
-import de.javagl.jgltf.model.GltfModel;
-import de.javagl.jgltf.model.NodeModel;
-import de.javagl.jgltf.model.SceneModel;
+import de.javagl.jgltf.model.*;
 import de.javagl.jgltf.model.io.GltfModelReader;
 import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
@@ -20,25 +18,21 @@ import net.xmx.velgfx.renderer.model.VxStaticModel;
 import net.xmx.velgfx.renderer.model.animation.VxAnimation;
 import net.xmx.velgfx.renderer.model.morph.VxMorphController;
 import net.xmx.velgfx.renderer.model.morph.VxMorphTarget;
-import net.xmx.velgfx.renderer.model.skeleton.VxBone;
-import net.xmx.velgfx.renderer.model.skeleton.VxNode;
 import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
 import net.xmx.velgfx.resources.VxResourceLocation;
 import org.joml.Matrix4f;
 
-import java.net.URI;
 import java.net.URL;
 import java.util.ArrayList;
-import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * A comprehensive loader for glTF 2.0 and GLB assets.
+ * A comprehensive loader for glTF 2.0 and GLB assets using the SoA architecture.
  * <p>
- * This class serves as the entry point for the glTF loading pipeline. It orchestrates the
- * reading of the file stream and delegates the processing of materials, geometry,
- * scene structure, morph targets, and animations to specialized helper classes.
+ * This class coordinates the parsing of the file, the flattening of the hierarchy,
+ * and the construction of the efficient runtime models.
  *
  * @author xI-Mx-Ix
  */
@@ -51,150 +45,184 @@ public class VxGltfLoader {
     }
 
     /**
-     * Loads a file as a static model suitable for rigid body rendering.
-     * <p>
-     * A static model parses the node hierarchy but does not include bone weights or
-     * vertex skinning data. It builds a command map to allow sub-nodes (like wheels on a car)
-     * to be animated via Rigid Body transformations.
+     * Loads a file as a static model with rigid body support.
      *
-     * @param location The resource location of the model file.
-     * @return The constructed static model.
-     * @throws RuntimeException If the model cannot be loaded or parsed.
+     * @param location The resource location.
+     * @return The static model.
      */
     public static VxStaticModel loadStatic(VxResourceLocation location) {
         GltfModel gltfModel = readModelFromClasspath(location);
-
-        // 1. Extract Materials
-        // Parses PBR properties (Metallic/Roughness) and uploads textures.
         List<VxMaterial> materials = VxGltfMaterial.parseMaterials(gltfModel);
-
-        // 2. Process Geometry (Vertices, Indices, Normals, Tangents)
-        // Flattens all meshes into a single buffer and generates missing attributes.
         List<VxDrawCommand> allCommands = new ArrayList<>();
+
+        // Process geometry
         VxGltfGeometry.GeometryResult geometry = VxGltfGeometry.processStaticGeometry(gltfModel, materials, allCommands);
 
-        // 3. Upload Geometry to GPU Arena
-        // Static models use the Static Vertex Layout (44 bytes, packed data) to save memory.
+        // Upload to arena
         VxArenaMesh arenaMesh = VxArenaManager.getInstance()
                 .getArena(VxStaticVertexLayout.getInstance())
                 .allocate(geometry.vertices, geometry.indices, allCommands, null);
 
-        // 4. Build Node Hierarchy
-        // glTF files can contain multiple scenes, but we typically use the default one (index 0).
+        // Build Skeleton Definition from Scene Hierarchy
         SceneModel scene = gltfModel.getSceneModels().get(0);
-        VxNode rootNode = new VxNode("GLTF_ROOT", null, new Matrix4f());
+        NodeModel root = scene.getNodeModels().get(0);
 
-        for (NodeModel node : scene.getNodeModels()) {
-            rootNode.addChild(VxGltfStructure.processNodeHierarchy(node, rootNode));
-        }
+        // Use buildSkeleton which returns the master skeleton directly
+        VxSkeleton skeleton = VxGltfStructure.buildSkeleton(root, null);
 
-        // 5. Extract Animations and Mappings
-        // Map Nodes to specific Draw Commands to support Rigid Body Animation.
-        Map<String, List<VxDrawCommand>> nodeCommands = VxGltfStructure.mapNodesToCommands(gltfModel, scene, allCommands);
-        Map<String, VxAnimation> animations = VxGltfAnimation.parseAnimations(gltfModel);
+        // Map node commands based on bone indices
+        Map<Integer, List<VxDrawCommand>> boneCommands = mapCommands(gltfModel, scene, allCommands, skeleton);
 
-        // Static skeleton wrapper (no bones, just hierarchy)
-        VxSkeleton skeleton = new VxSkeleton(rootNode, Collections.emptyList(), new Matrix4f());
+        // Pass skeleton to animation parser instead of definition
+        Map<String, VxAnimation> animations = VxGltfAnimation.parseAnimations(gltfModel, skeleton);
 
-        return new VxStaticModel(skeleton, arenaMesh, animations, nodeCommands);
+        return new VxStaticModel(skeleton, arenaMesh, animations, boneCommands);
     }
 
     /**
-     * Imports a file as a {@link VxSkinnedModel} suitable for skeletal and morph animation.
+     * Loads a file as a skinned model supporting skeletal animation.
      * <p>
-     * A skinned model includes:
-     * <ul>
-     *     <li>Vertex Attributes: Weights and Joints for Skinning.</li>
-     *     <li>Skeleton: Inverse Bind Matrices.</li>
-     *     <li>Morph Targets: Extracted deltas loaded into the Texture Buffer Atlas.</li>
-     * </ul>
+     * This method orchestrates the following:
+     * <ol>
+     *     <li>Extracts Inverse Bind Matrices from the skin definition.</li>
+     *     <li>Builds the {@link VxSkeleton} hierarchy first.</li>
+     *     <li>Creates a "Bake Map" that links local glTF skin joints to global skeleton indices.</li>
+     *     <li>Processes the geometry, baking the remapped indices directly into the vertex buffer.</li>
+     *     <li>Loads animations and morph targets.</li>
+     * </ol>
      *
-     * @param location The resource location of the model file.
-     * @return A constructed skinned model.
-     * @throws RuntimeException If the model cannot be loaded or parsed.
+     * @param location The resource location of the glTF/GLB file.
+     * @return The loaded skinned model.
      */
     public static VxSkinnedModel loadSkinned(VxResourceLocation location) {
         GltfModel gltfModel = readModelFromClasspath(location);
-
-        // 1. Extract Materials
         List<VxMaterial> materials = VxGltfMaterial.parseMaterials(gltfModel);
-
-        // 2. Process Geometry & Extract Bone Definitions
         List<VxDrawCommand> allCommands = new ArrayList<>();
-        List<VxGltfStructure.BoneDefinition> boneDefinitions = new ArrayList<>();
+        List<VxGltfStructure.BoneDefinition> boneDefs = new ArrayList<>();
 
-        VxGltfGeometry.GeometryResult geometry = VxGltfGeometry.processSkinnedGeometry(gltfModel, materials, allCommands, boneDefinitions);
+        // 1. Extract Skin Definitions (Inverse Bind Matrices) manually.
+        // We do this before creating the skeleton to ensure the IBMs are populated.
+        if (!gltfModel.getSkinModels().isEmpty()) {
+            SkinModel skin = gltfModel.getSkinModels().get(0);
+            for (int i = 0; i < skin.getJoints().size(); i++) {
+                NodeModel node = skin.getJoints().get(i);
+                Matrix4f ibm = new Matrix4f();
 
-        // 3. Build Node Hierarchy
+                AccessorModel accessor = skin.getInverseBindMatrices();
+                if (accessor != null) {
+                    float[] m = VxGltfAccessorUtil.readAccessorAsFloats(accessor);
+                    float[] matData = new float[16];
+                    System.arraycopy(m, i * 16, matData, 0, 16);
+                    ibm.set(matData);
+                }
+                boneDefs.add(new VxGltfStructure.BoneDefinition(i, node.getName(), ibm));
+            }
+        }
+
         SceneModel scene = gltfModel.getSceneModels().get(0);
-        VxNode rootNode = new VxNode("GLTF_ROOT", null, new Matrix4f());
+        NodeModel root = scene.getNodeModels().get(0);
 
-        for (NodeModel node : scene.getNodeModels()) {
-            rootNode.addChild(VxGltfStructure.processNodeHierarchy(node, rootNode));
+        // 2. Build the Master Skeleton.
+        VxSkeleton skeleton = VxGltfStructure.buildSkeleton(root, boneDefs);
+
+        // 3. Create the Bake Map.
+        // Maps: [Skin Joint List Index] -> [Global Skeleton Array Index].
+        // This map is passed to the geometry processor to rewrite vertex attributes.
+        int[] jointBakeMap = null;
+        if (!gltfModel.getSkinModels().isEmpty()) {
+            SkinModel skin = gltfModel.getSkinModels().get(0);
+            List<NodeModel> joints = skin.getJoints();
+            jointBakeMap = new int[joints.size()];
+
+            for (int i = 0; i < joints.size(); i++) {
+                String nodeName = joints.get(i).getName();
+                int skeletonIndex = skeleton.indexOf(nodeName);
+
+                if (skeletonIndex == -1) {
+                    VelGFX.LOGGER.warn("Skin joint '{}' defined in glTF but not found in Skeleton hierarchy.", nodeName);
+                    skeletonIndex = 0; // Fallback to root to prevent crash
+                }
+                jointBakeMap[i] = skeletonIndex;
+            }
         }
 
-        // 4. Construct Final Skeleton
-        List<VxBone> finalBones = VxGltfStructure.buildSkeletonBones(boneDefinitions, rootNode);
-        Matrix4f globalInverse = new Matrix4f(); // Identity for glTF 2.0
-        VxSkeleton skeleton = new VxSkeleton(rootNode, finalBones, globalInverse);
+        // 4. Process Geometry with Vertex Baking.
+        // The jointBakeMap allows the vertices to point directly to the correct matrix slot.
+        VxGltfGeometry.GeometryResult geometry = VxGltfGeometry.processSkinnedGeometry(
+                gltfModel, materials, allCommands, jointBakeMap
+        );
 
-        // 5. Extract Morph Targets
-        // This invokes the Morph Loader to process Sparse Accessors and upload to TBO.
+        // 5. Load remaining components.
         List<VxMorphTarget> morphTargets = VxGltfMorphLoader.extractMorphTargets(gltfModel);
-        VxMorphController morphController = null;
-        if (!morphTargets.isEmpty()) {
-            morphController = new VxMorphController(morphTargets);
-        }
+        VxMorphController morphController = !morphTargets.isEmpty() ? new VxMorphController(morphTargets) : null;
 
-        // 6. Extract Animations
-        Map<String, VxAnimation> animations = VxGltfAnimation.parseAnimations(gltfModel);
+        Map<String, VxAnimation> animations = VxGltfAnimation.parseAnimations(gltfModel, skeleton);
 
-        // 7. Upload Geometry to GPU Arena
-        // Skinned models use the Skinned Vertex Layout (80 bytes, high precision floats).
+        // 6. Upload baked geometry to the GPU Arena.
         VxArenaMesh sourceMesh = VxArenaManager.getInstance()
                 .getArena(VxSkinnedVertexLayout.getInstance())
                 .allocate(geometry.vertices, geometry.indices, allCommands, null);
 
-        // 8. Create Model
-        // Pass the morphController to the constructor
         return new VxSkinnedModel(skeleton, sourceMesh, animations, morphController);
     }
 
     /**
-     * Reads the glTF model from the Java Classpath.
+     * Maps global draw commands to specific bones/nodes based on their mesh assignment.
      * <p>
-     * Instead of reading a raw InputStream (which loses context), this method
-     * converts the resource to a URI. This allows the glTF reader to resolve
-     * relative references, such as external {@code .bin} files or texture images,
-     * even when packed inside a JAR.
-     *
-     * @param location The resource location.
-     * @return The parsed JglTF Model object with all buffers loaded.
+     * This allows the renderer to know which parts of the mesh belong to which rigid body node.
      */
-    private static GltfModel readModelFromClasspath(VxResourceLocation location) {
-        String path = location.getPath();
-        if (!path.startsWith("/")) {
-            path = "/" + path;
+    private static Map<Integer, List<VxDrawCommand>> mapCommands(GltfModel model, SceneModel scene, List<VxDrawCommand> allCommands, VxSkeleton skeleton) {
+        Map<MeshModel, List<VxDrawCommand>> meshToCommands = new HashMap<>();
+        int globalIdx = 0;
+
+        for (MeshModel mesh : model.getMeshModels()) {
+            List<VxDrawCommand> cmds = new ArrayList<>();
+            int primCount = mesh.getMeshPrimitiveModels().size();
+            for (int i = 0; i < primCount; i++) {
+                if (globalIdx < allCommands.size()) cmds.add(allCommands.get(globalIdx++));
+            }
+            meshToCommands.put(mesh, cmds);
         }
 
-        try {
-            // Get the URL of the resource (handles 'jar:file:...' or 'file:...')
-            URL url = VxGltfLoader.class.getResource(path);
+        Map<Integer, List<VxDrawCommand>> result = new HashMap<>();
 
-            if (url == null) {
-                throw new RuntimeException("Model file not found in classpath: " + path);
+        // Access skeleton.boneCount directly
+        for (int i = 0; i < skeleton.boneCount; i++) {
+            String nodeName = skeleton.names[i];
+
+            NodeModel node = findNode(scene.getNodeModels(), nodeName);
+            if (node != null) {
+                // If the node has meshes, assign their commands to this bone index
+                for (MeshModel m : node.getMeshModels()) {
+                    List<VxDrawCommand> c = meshToCommands.get(m);
+                    if (c != null) {
+                        result.computeIfAbsent(i, k -> new ArrayList<>()).addAll(c);
+                    }
+                }
             }
+        }
+        return result;
+    }
 
-            // Convert to URI to provide a base path for relative lookups
-            URI uri = url.toURI();
-            GltfModelReader reader = new GltfModelReader();
+    // Helper to find a node by name in the glTF graph
+    private static NodeModel findNode(List<NodeModel> nodes, String name) {
+        for (NodeModel n : nodes) {
+            if (name.equals(n.getName())) return n;
+            NodeModel res = findNode(n.getChildren(), name);
+            if (res != null) return res;
+        }
+        return null;
+    }
 
-            // Use 'read(URI)' instead of 'readWithoutReferences(Stream)'.
-            // This ensures external .bin files and textures are correctly loaded.
-            return reader.read(uri);
-
+    private static GltfModel readModelFromClasspath(VxResourceLocation location) {
+        String path = location.getPath();
+        if (!path.startsWith("/")) path = "/" + path;
+        try {
+            URL url = VxGltfLoader.class.getResource(path);
+            if (url == null) throw new RuntimeException("Model not found: " + path);
+            return new GltfModelReader().read(url.toURI());
         } catch (Exception e) {
-            VelGFX.LOGGER.error("Failed to read glTF model: " + path, e);
+            VelGFX.LOGGER.error("Failed to read glTF: " + path, e);
             throw new RuntimeException("glTF Import Error", e);
         }
     }
