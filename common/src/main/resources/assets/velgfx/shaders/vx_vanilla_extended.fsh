@@ -26,7 +26,9 @@ uniform sampler2D Sampler4; // Normal Map (Tangent Space)
 // --- Uniforms ---
 uniform vec4 ColorModulator;
 uniform vec3 Light0_Direction; // Light direction in View Space (Sun)
+uniform vec3 Light0_Color;     // Calculated intensity and color of Sun
 uniform vec3 Light1_Direction; // Light direction in View Space (Moon/Fill)
+uniform vec3 Light1_Color;     // Calculated intensity and color of Moon
 uniform float AlphaCutoff;     // Threshold for alpha testing
 
 // --- Inputs ---
@@ -42,10 +44,6 @@ out vec4 fragColor;
 
 // --- Constants ---
 #define EMISSIVE_GAIN 3.0
-
-// Light intensities for specular calculation
-#define LIGHT0_INTENSITY vec3(2.5)
-#define LIGHT1_INTENSITY vec3(0.8)
 
 /**
  * Main entry point.
@@ -104,8 +102,9 @@ vec3 viewDir = normalize(- v_PositionView);
 vec2 lightUV = clamp(v_LightMapUV, vec2(0.5 / 16.0), vec2(15.5 / 16.0));
 vec3 lightMapColor = texture(Sampler2, lightUV).rgb;
 
-// Calculate simple directional factor for the environment light
-float dirLightFactor = computeDirectionalLight(normal, Light0_Direction, Light1_Direction);
+// Calculate simple directional factor for the environment light.
+// This now utilizes the dynamic light colors passed from the CPU to determine brightness.
+float dirLightFactor = computeDirectionalLight(normal, Light0_Direction, Light0_Color, Light1_Direction, Light1_Color);
 
 // 4. Physical Light Component Calculation
 
@@ -126,8 +125,10 @@ vec3 specularTerm = vec3(0.0);
 
 // Optimization: Skip specular math if roughness is very high (matte) and not metallic.
 if (roughness < 0.9 || metallic > 0.1) {
-specularTerm += computePBRLight(normal, viewDir, Light0_Direction, color.rgb, roughness, metallic, LIGHT0_INTENSITY);
-specularTerm += computePBRLight(normal, viewDir, Light1_Direction, color.rgb, roughness, metallic, LIGHT1_INTENSITY);
+// Calculate specular highlight for Sun (Light0) using dynamic color
+specularTerm += computePBRLight(normal, viewDir, Light0_Direction, color.rgb, roughness, metallic, Light0_Color);
+// Calculate specular highlight for Moon (Light1) using dynamic color
+specularTerm += computePBRLight(normal, viewDir, Light1_Direction, color.rgb, roughness, metallic, Light1_Color);
 }
 
 // 5. Final Composition

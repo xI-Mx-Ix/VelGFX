@@ -84,6 +84,8 @@ public class VxVanillaRenderer {
         Matrix4f auxViewRotationOnly = cache.mat4_4;
         Vector3f auxLight0 = cache.vec3_1;
         Vector3f auxLight1 = cache.vec3_2;
+        Vector3f auxColor0 = cache.vec3_3;
+        Vector3f auxColor1 = cache.vec3_4;
         FloatBuffer matrixBuffer = cache.floatBuffer16;
 
         try {
@@ -103,29 +105,43 @@ public class VxVanillaRenderer {
             shader.setUniform("FogColor", RenderSystem.getShaderFogColor());
             shader.setUniform("FogShape", RenderSystem.getShaderFogShape().getIndex());
 
-            // 5. Calculate Dynamic Lighting Directions.
-            // We determine the sun's position based on the current world time.
-            // This ensures specular highlights on blocks align with the celestial bodies.
+            // 5. Calculate Dynamic Lighting Directions and Intensity.
             float sunAngle = 0.0f;
             if (Minecraft.getInstance().level != null) {
                 // getSunAngle returns radians (0 to 2PI), where 0 represents noon.
                 sunAngle = Minecraft.getInstance().level.getSunAngle(Minecraft.getInstance().getTimer().getGameTimeDeltaPartialTick(true));
             }
 
-            // Calculate Sun Vector in World Space (Simple rotation around Z-axis logic).
-            float sunX = (float) Math.sin(sunAngle);
-            float sunY = (float) Math.cos(sunAngle);
+            // Raw Sine/Cosine values
+            // Noon (Angle 0) -> sin=0, cos=1
+            float rawSunX = (float) Math.sin(sunAngle);
+            float rawSunY = (float) Math.cos(sunAngle);
             float sunZ = 0.0f;
 
-            // Set Light 0 (Sun)
-            auxLight0.set(sunX, sunY, sunZ).normalize();
+            // Set Light Directions (World Space)
+            auxLight0.set(-rawSunX, rawSunY, sunZ).normalize();   // Sun Vector
+            auxLight1.set(rawSunX, -rawSunY, -sunZ).normalize();  // Moon Vector (Opposite)
 
-            // Set Light 1 (Moon) - Opposite to Sun
-            auxLight1.set(-sunX, -sunY, -sunZ).normalize();
+            // Calculate Light Intensity based on elevation (Y component).
+            // We use the Y value of the calculated vector.
+            // If Y > 0, the celestial body is above the horizon.
+            float sunHeight = auxLight0.y;
+            float moonHeight = auxLight1.y;
 
-            // Transform Lights to View Space.
-            // The shader expects light directions relative to the camera (View Space).
-            // We take the View Matrix, strip the translation (position), and apply the rotation.
+            // Base intensities
+            float maxSunIntensity = 0.5f;
+            float maxMoonIntensity = 0.5f;
+
+            // Clamp intensity to 0 when below horizon to prevent lighting from below the ground.
+            // Added +0.1f bias for smoother twilight transition.
+            float sunBrightness = Math.max(0.0f, sunHeight + 0.1f) * maxSunIntensity;
+            float moonBrightness = Math.max(0.0f, moonHeight + 0.1f) * maxMoonIntensity;
+
+            shader.setUniform("Light0_Color", auxColor0.set(sunBrightness, sunBrightness, sunBrightness));
+            // Slight blue tint for moonlight (B + 0.1)
+            shader.setUniform("Light1_Color", auxColor1.set(moonBrightness, moonBrightness, moonBrightness + 0.1f));
+
+            // Transform Light Directions to View Space.
             auxViewRotationOnly.set(viewMatrix);
             auxViewRotationOnly.setTranslation(0, 0, 0);
 

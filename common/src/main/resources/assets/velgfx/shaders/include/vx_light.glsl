@@ -8,22 +8,33 @@
 
 // --- Constants ---
 #define PI 3.14159265359
-#define MINECRAFT_LIGHT_POWER   0.6
 #define MINECRAFT_AMBIENT_LIGHT 0.4
 
 /**
  * Calculates the standard Minecraft directional lighting factor (Diffuse only).
- * Both light directions must be in View Space to match the normal.
+ * Utilizes the calculated light colors to determine contribution.
  *
- * @param normal    The vertex normal in view space.
- * @param lightDir0 The first light direction (e.g., Sun) in view space.
- * @param lightDir1 The second light direction (e.g., Moon/Fill) in view space.
+ * @param normal     The vertex normal in view space.
+ * @param lightDir0  The first light direction (Sun).
+ * @param lightColor0 The intensity/color of the first light.
+ * @param lightDir1  The second light direction (Moon).
+ * @param lightColor1 The intensity/color of the second light.
  * @return A scalar multiplier for the light intensity (0.0 to 1.0).
  */
-float computeDirectionalLight(vec3 normal, vec3 lightDir0, vec3 lightDir1) {
-    float light0 = max(0.0, dot(lightDir0, normal));
-    float light1 = max(0.0, dot(lightDir1, normal));
-    return min(1.0, (light0 + light1) * MINECRAFT_LIGHT_POWER + MINECRAFT_AMBIENT_LIGHT);
+float computeDirectionalLight(vec3 normal, vec3 lightDir0, vec3 lightColor0, vec3 lightDir1, vec3 lightColor1) {
+    // Calculate N dot L for both sources
+    float nDotL0 = max(0.0, dot(lightDir0, normal));
+    float nDotL1 = max(0.0, dot(lightDir1, normal));
+
+    // Weight the contribution by the light's current intensity (brightness)
+    // We use the luminance or max component of the color to drive the vanilla shading factor
+    float intensity0 = length(lightColor0) * nDotL0;
+    float intensity1 = length(lightColor1) * nDotL1;
+
+    // Scale down slightly to match vanilla-ish brightness curve
+    float combined = (intensity0 + intensity1) * 0.6;
+
+    return min(1.0, combined + MINECRAFT_AMBIENT_LIGHT);
 }
 
 // --- PBR Functions (Cook-Torrance BRDF) ---

@@ -51,9 +51,12 @@ public class VxVanillaExtendedShader extends VxShaderProgram {
         createUniform("Sampler3"); // LabPBR Specular (Roughness/Metallic/Emissive)
         createUniform("Sampler4"); // Normal Map
 
-        // Lighting Vectors
+        // Lighting Vectors & Colors
         createUniform("Light0_Direction");
+        createUniform("Light0_Color");
+
         createUniform("Light1_Direction");
+        createUniform("Light1_Color");
 
         // Material Properties
         createUniform("ColorModulator");
