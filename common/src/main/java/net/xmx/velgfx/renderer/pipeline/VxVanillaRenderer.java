@@ -308,7 +308,7 @@ public class VxVanillaRenderer {
 
         // Clamp intensity to avoid negative light from below the horizon.
         // A small bias (+0.1) provides twilight illumination.
-        float sunBrightness = Math.max(0.0f, sunHeight + 0.1f) * 0.7f;
+        float sunBrightness = Math.max(0.0f, sunHeight + 0.1f) * 1f;
         float moonBrightness = Math.max(0.0f, moonHeight + 0.1f) * 0.5f;
 
         color0.set(sunBrightness, sunBrightness, sunBrightness);
