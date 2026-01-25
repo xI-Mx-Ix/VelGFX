@@ -37,6 +37,9 @@ Unlike traditional object-oriented animation systems that suffer from pointer ch
 ### Arena-Based Memory Management
 To minimize Java Garbage Collection pressure, the engine uses a pre-allocated **Arena Buffer** system. Static geometry and skinned instances share massive, singular Vertex Buffer Objects (VBOs). Memory segments are allocated and freed dynamically using a First-Fit strategy, drastically reducing draw call overhead.
 
+### Hardware Instanced Rendering
+For the Vanilla rendering backend, VelGFX implements a fully automatic **Hardware Instancing** pipeline. Instead of issuing individual draw calls for every entity, the engine aggregates compatible meshes (sharing geometry and materials) into batches. It then submits them via a single `glDrawElementsInstanced` command. This architecture allows for the rendering of thousands of identical entities with negligible CPU cost.
+
 ### Hardware Skinning & Morph Targets
 Vertex deformation is handled entirely on the GPU to keep the CPU free for game logic.
 *   **Transform Feedback:** Skinning calculations are performed via a vertex shader compute pass, writing deformed vertices to memory for the main render pass.
