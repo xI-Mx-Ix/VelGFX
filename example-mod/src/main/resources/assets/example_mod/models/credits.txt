@@ -1,7 +1,7 @@
 Credits / Third-Party Assets
 ============================
 
-Asset: AnimatedMorphCube (AnimatedMorphCube.glb)
+Asset: AnimatedMorphCube (animated_morph_cube.glb)
 Author: Khronos Group (glTF Sample Models)
 Source: https://github.com/KhronosGroup/glTF-Sample-Models/tree/main/2.0/AnimatedMorphCube
 License: Creative Commons Attribution 4.0 International (CC BY 4.0)
