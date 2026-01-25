@@ -11,7 +11,7 @@ import de.javagl.jgltf.model.TextureModel;
 import de.javagl.jgltf.model.v2.MaterialModelV2;
 import net.xmx.velgfx.renderer.VelGFX;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;
-import net.xmx.velgfx.renderer.gl.material.VxTextureBaker;
+import net.xmx.velgfx.renderer.gl.material.VxPBRTexturePipeline;
 import net.xmx.velgfx.renderer.gl.state.VxBlendMode;
 import net.xmx.velgfx.renderer.gl.state.VxRenderType;
 import net.xmx.velgfx.resources.VxNativeImage;
@@ -25,7 +25,7 @@ import java.util.List;
  * A parser that converts raw glTF material definitions into the engine's internal {@link VxMaterial} format.
  * <p>
  * This class is responsible for loading embedded image data and delegating
- * the PBR texture baking process to the GPU via {@link VxTextureBaker}.
+ * the PBR texture baking process to the GPU via {@link VxPBRTexturePipeline}.
  *
  * @author xI-Mx-Ix
  */
@@ -84,7 +84,7 @@ public class VxGltfMaterial {
 
                     // --- 3. GPU Bake Process ---
                     // Generates Albedo (Baked) and Specular (LabPBR) textures on the GPU
-                    VxTextureBaker.bakeMaterialTextures(material, albedoImg, mrImg, occlusionImg, emissiveImg);
+                    VxPBRTexturePipeline.createLabPBRTexture(material, albedoImg, mrImg, occlusionImg, emissiveImg);
 
                     // Mark source locations as null since we generated GL IDs directly
                     material.albedoMap = null;

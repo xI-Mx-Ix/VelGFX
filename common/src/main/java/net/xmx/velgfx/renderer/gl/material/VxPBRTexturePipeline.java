@@ -28,12 +28,12 @@ import java.nio.IntBuffer;
  *
  * @author xI-Mx-Ix
  */
-public final class VxTextureBaker {
+public final class VxPBRTexturePipeline {
 
     /**
      * Private constructor to prevent instantiation of utility class.
      */
-    private VxTextureBaker() {
+    private VxPBRTexturePipeline() {
     }
 
     /**
@@ -55,11 +55,11 @@ public final class VxTextureBaker {
      * @param occlusionImg Raw Occlusion image (can be null).
      * @param emissiveImg  Raw Emissive image (can be null).
      */
-    public static void bakeMaterialTextures(VxMaterial material,
-                                            VxNativeImage albedoImg,
-                                            VxNativeImage mrImg,
-                                            VxNativeImage occlusionImg,
-                                            VxNativeImage emissiveImg) {
+    public static void createLabPBRTexture(VxMaterial material,
+                                           VxNativeImage albedoImg,
+                                           VxNativeImage mrImg,
+                                           VxNativeImage occlusionImg,
+                                           VxNativeImage emissiveImg) {
 
         // 1. Determine Target Resolution (based on largest input)
         int width = 1;
