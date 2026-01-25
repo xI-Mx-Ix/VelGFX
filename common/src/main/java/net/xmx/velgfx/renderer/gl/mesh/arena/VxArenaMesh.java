@@ -183,7 +183,8 @@ public class VxArenaMesh implements IVxRenderableMesh {
                     cmd.material,
                     poseStack.last().pose(),
                     poseStack.last().normal(),
-                    packedLight
+                    packedLight,
+                    0 // Default overlay UV (0) for standard static mesh rendering
             );
         }
     }

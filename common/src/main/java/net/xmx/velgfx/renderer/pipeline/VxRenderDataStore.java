@@ -18,10 +18,12 @@ import java.util.List;
  * <p>
  * This class is designed to maximize CPU cache locality by storing raw OpenGL draw arguments,
  * material references, and transformation matrices in parallel primitive arrays rather than
- * wrapping them in individual objects. This approach significantly reduces garbage collection
- * pressure and improves iteration speed during the rendering pass.
+ * wrapping them in individual objects.
  * <p>
- * The store is stateful and must be reset at the start of every frame.
+ * This architectural choice drastically reduces Garbage Collection pressure and improves
+ * iteration speed during the rendering pass, especially for large numbers of entities.
+ * <p>
+ * The store also handles the logical sorting of draw calls to optimize for Instanced Rendering.
  *
  * @author xI-Mx-Ix
  */
@@ -29,7 +31,7 @@ public class VxRenderDataStore {
 
     /**
      * The initial capacity for the internal arrays.
-     * Set to a reasonably high number (4096) to avoid resizing during typical gameplay scenarios.
+     * Defaults to 4096 to handle typical scenes without immediate resizing.
      */
     private static final int INITIAL_CAPACITY = 4096;
 
@@ -66,28 +68,30 @@ public class VxRenderDataStore {
     public long[] indexOffsets;
 
     /**
-     * Array storing the base vertex index to be added to every element index during the draw call.
+     * Array storing the base vertex index to be added to every element index.
      */
     public int[] baseVertices;
 
     /**
-     * Array storing the packed lightmap coordinates (SkyLight and BlockLight).
-     * <p>
-     * Format: 16 bits for BlockLight | 16 bits for SkyLight.
+     * Array storing the packed lightmap coordinates (Block Light | Sky Light).
      */
     public int[] packedLights;
+
+    /**
+     * Array storing the packed overlay texture coordinates (used for damage tinting).
+     */
+    public int[] overlayUVs;
 
     // --- Material References ---
 
     /**
      * Array storing indices that point to the {@link #frameMaterials} list.
-     * This allows multiple draw calls to reference the same material object without duplication.
+     * Allows multiple draw calls to reference the same material object.
      */
     public int[] materialIndices;
 
     /**
      * A list of unique {@link VxMaterial} objects referenced in the current frame.
-     * The {@code materialIndices} array stores pointers to positions within this list.
      */
     public final List<VxMaterial> frameMaterials = new ArrayList<>();
 
@@ -95,39 +99,37 @@ public class VxRenderDataStore {
 
     /**
      * A flat array containing 4x4 Model Matrices for every draw call.
-     * <p>
-     * Layout: The matrix for index {@code i} starts at {@code i * 16}.
-     * The data is stored in column-major order to be compatible with OpenGL upload requirements.
+     * Layout: 16 floats per matrix.
      */
     public float[] modelMatrices;
 
     /**
      * A flat array containing 3x3 Normal Matrices for every draw call.
-     * <p>
-     * Layout: The matrix for index {@code i} starts at {@code i * 9}.
-     * This matrix is used to transform surface normals into world/view space correctly.
+     * Layout: 9 floats per matrix.
      */
     public float[] normalMatrices;
 
     // --- Sorting Buckets ---
 
     /**
-     * A list of indices pointing to draw calls that belong to the {@link VxRenderType#OPAQUE} pass.
-     * These are rendered first and write to the depth buffer.
+     * Opaque draw calls. These are sorted by Material -> Mesh to facilitate Instancing.
      */
     public final IntList opaqueBucket = new IntList(INITIAL_CAPACITY);
 
     /**
-     * A list of indices pointing to draw calls that belong to the {@link VxRenderType#CUTOUT} pass.
-     * These require alpha testing (discarding fragments) but write to the depth buffer.
+     * Cutout draw calls (Alpha Test). Sorted by Material -> Mesh.
      */
     public final IntList cutoutBucket = new IntList(INITIAL_CAPACITY / 4);
 
     /**
-     * A list of indices pointing to draw calls that belong to the {@link VxRenderType#TRANSLUCENT} pass.
-     * These require alpha blending and depth sorting.
+     * Translucent draw calls. Sorted by Depth (Back-to-Front).
      */
     public final IntList translucentBucket = new IntList(INITIAL_CAPACITY / 4);
+
+    /**
+     * Internal comparator helper used to sort buckets for instancing optimization.
+     */
+    private final InstancingSorter instancingSorter = new InstancingSorter();
 
     /**
      * Constructs a new {@code VxRenderDataStore} and allocates the initial memory blocks.
@@ -138,9 +140,8 @@ public class VxRenderDataStore {
 
     /**
      * Allocates all internal arrays to the specified size.
-     * This is used during initialization and when the store needs to grow.
      *
-     * @param size The number of elements the arrays should be able to hold.
+     * @param size The new capacity for the arrays.
      */
     private void allocate(int size) {
         this.capacity = size;
@@ -150,7 +151,9 @@ public class VxRenderDataStore {
         this.indexOffsets = new long[size];
         this.baseVertices = new int[size];
         this.packedLights = new int[size];
+        this.overlayUVs = new int[size];
         this.materialIndices = new int[size];
+
         // 16 floats per 4x4 matrix
         this.modelMatrices = new float[size * 16];
         // 9 floats per 3x3 matrix
@@ -160,9 +163,7 @@ public class VxRenderDataStore {
     /**
      * Resets the store counters for the next frame.
      * <p>
-     * This method is extremely lightweight; it does not nullify arrays or release memory.
-     * It simply resets the {@code count} and clears the bucket lists, allowing the existing
-     * arrays to be overwritten in the next frame. This ensures zero allocation during steady-state rendering.
+     * This operation is O(1) regarding memory allocation; it merely resets the index counters.
      */
     public void reset() {
         this.count = 0;
@@ -175,22 +176,23 @@ public class VxRenderDataStore {
     /**
      * Records a single draw call into the SoA structure.
      * <p>
-     * This method captures all necessary rendering state, flattens the transformation matrices
-     * into the float arrays, and assigns the draw call to the correct render pass bucket based
-     * on the material's {@link VxRenderType}.
+     * This method captures all state required to render a mesh and assigns it to the
+     * correct sorting bucket based on its material type.
      *
-     * @param vaoId       The OpenGL Vertex Array Object ID containing the mesh data.
-     * @param eboId       The OpenGL Element Buffer Object ID containing the indices.
-     * @param indexCount  The number of indices to render (the triangle count * 3).
-     * @param indexOffset The byte offset within the EBO where the indices begin.
-     * @param baseVertex  The integer value added to each index (used for batching).
+     * @param vaoId       The OpenGL Vertex Array Object ID.
+     * @param eboId       The OpenGL Element Buffer Object ID.
+     * @param indexCount  The number of indices to render.
+     * @param indexOffset The byte offset within the EBO.
+     * @param baseVertex  The integer value added to each index.
      * @param material    The {@link VxMaterial} defining textures and render state.
-     * @param pose        The 4x4 Model Matrix (Position, Rotation, Scale).
-     * @param normal      The 3x3 Normal Matrix (Rotation, Scale).
+     * @param pose        The 4x4 Model Matrix.
+     * @param normal      The 3x3 Normal Matrix.
      * @param packedLight The lightmap coordinates for the mesh.
+     * @param overlayUV   The overlay texture coordinates (packed int).
      */
     public void record(int vaoId, int eboId, int indexCount, long indexOffset, int baseVertex,
-                       VxMaterial material, Matrix4f pose, Matrix3f normal, int packedLight) {
+                       VxMaterial material, Matrix4f pose, Matrix3f normal, int packedLight, int overlayUV) {
+        // Grow arrays if necessary.
         ensureCapacity(count + 1);
 
         int index = count;
@@ -202,17 +204,18 @@ public class VxRenderDataStore {
         this.indexOffsets[index] = indexOffset;
         this.baseVertices[index] = baseVertex;
         this.packedLights[index] = packedLight;
+        this.overlayUVs[index] = overlayUV;
 
-        // Store Material Index
+        // Store Material Reference
         this.frameMaterials.add(material);
         this.materialIndices[index] = this.frameMaterials.size() - 1;
 
-        // Store Flattened Matrices (Zero Allocation)
-        // We write directly into the float array to avoid creating buffer objects here.
+        // Store Flattened Matrices
+        // Writes directly to the array to avoid array copying.
         pose.get(this.modelMatrices, index * 16);
         normal.get(this.normalMatrices, index * 9);
 
-        // Add to the appropriate sorting Bucket
+        // Add to the appropriate sorting Bucket based on render type.
         if (material.renderType == VxRenderType.TRANSLUCENT) {
             translucentBucket.add(index);
         } else if (material.renderType == VxRenderType.CUTOUT) {
@@ -225,10 +228,45 @@ public class VxRenderDataStore {
     }
 
     /**
-     * Checks if the current arrays are large enough to hold the requested capacity.
-     * If not, it triggers a resize operation, growing the arrays by a factor of 2.
+     * Sorts the Opaque and Cutout buckets to optimize for Instanced Rendering.
+     * <p>
+     * The sorting order is:
+     * <ol>
+     *     <li>Material (Minimize state changes, group compatible items).</li>
+     *     <li>VAO ID (Group identical geometries).</li>
+     *     <li>Index Offset (Group sub-meshes).</li>
+     * </ol>
+     * This grouping allows the {@link VxVanillaRenderer} to process long sequential runs
+     * of identical meshes as a single instanced draw call.
+     */
+    public void sortForInstancing() {
+        sortBucket(opaqueBucket);
+        sortBucket(cutoutBucket);
+    }
+
+    /**
+     * Sorts a specific bucket using the instancing comparator.
      *
-     * @param minCapacity The minimum required capacity.
+     * @param bucket The bucket to sort.
+     */
+    private void sortBucket(IntList bucket) {
+        if (bucket.size <= 1) return;
+
+        // We box indices to Integer[] to use the Arrays.sort(T[], Comparator) method.
+        // While primitive sorting would be faster, the overhead here is negligible compared
+        // to the GPU savings from instancing.
+        Integer[] indices = new Integer[bucket.size];
+        for (int i = 0; i < bucket.size; i++) indices[i] = bucket.data[i];
+
+        Arrays.sort(indices, instancingSorter);
+
+        for (int i = 0; i < bucket.size; i++) bucket.data[i] = indices[i];
+    }
+
+    /**
+     * Checks capacity and resizes arrays if needed.
+     *
+     * @param minCapacity The required capacity.
      */
     private void ensureCapacity(int minCapacity) {
         if (minCapacity > capacity) {
@@ -240,6 +278,7 @@ public class VxRenderDataStore {
             this.indexOffsets = Arrays.copyOf(this.indexOffsets, newCapacity);
             this.baseVertices = Arrays.copyOf(this.baseVertices, newCapacity);
             this.packedLights = Arrays.copyOf(this.packedLights, newCapacity);
+            this.overlayUVs = Arrays.copyOf(this.overlayUVs, newCapacity);
             this.materialIndices = Arrays.copyOf(this.materialIndices, newCapacity);
             this.modelMatrices = Arrays.copyOf(this.modelMatrices, newCapacity * 16);
             this.normalMatrices = Arrays.copyOf(this.normalMatrices, newCapacity * 9);
@@ -249,34 +288,58 @@ public class VxRenderDataStore {
     }
 
     /**
+     * Comparator for sorting draw calls to maximize instancing potential.
+     */
+    private class InstancingSorter implements java.util.Comparator<Integer> {
+        @Override
+        public int compare(Integer a, Integer b) {
+            // 1. Sort by Material Identity (Reference Equality)
+            // Grouping by material prevents frequent texture bindings.
+            VxMaterial matA = frameMaterials.get(materialIndices[a]);
+            VxMaterial matB = frameMaterials.get(materialIndices[b]);
+
+            // We compare system identity hash codes for fast grouping.
+            int matCompare = Integer.compare(System.identityHashCode(matA), System.identityHashCode(matB));
+            if (matCompare != 0) return matCompare;
+
+            // 2. Sort by Geometry (VAO)
+            // Required for instancing: batches must share the same VAO.
+            int vaoCompare = Integer.compare(vaoIds[a], vaoIds[b]);
+            if (vaoCompare != 0) return vaoCompare;
+
+            // 3. Sort by Index Offset
+            // Keeps sub-meshes of the same buffer together.
+            return Long.compare(indexOffsets[a], indexOffsets[b]);
+        }
+    }
+
+    /**
      * A specialized primitive integer list implementation.
      * <p>
-     * This class replaces {@code ArrayList<Integer>} to avoid the significant overhead of
-     * Java object auto-boxing/unboxing when managing thousands of indices per frame.
+     * Replaces {@code ArrayList<Integer>} to avoid auto-boxing overhead during recording.
      */
     public static class IntList {
         /**
-         * The backing array of integers.
+         * Backing array.
          */
         public int[] data;
 
         /**
-         * The logical size of the list (number of valid elements).
+         * Current logical size.
          */
         public int size = 0;
 
         /**
-         * Constructs a new IntList with the specified initial capacity.
+         * Constructs a new list.
          *
-         * @param capacity The initial size of the backing array.
+         * @param capacity Initial capacity.
          */
         public IntList(int capacity) {
             this.data = new int[capacity];
         }
 
         /**
-         * Adds a primitive integer to the list.
-         * Resizes the backing array if necessary.
+         * Adds a value to the list, resizing if necessary.
          *
          * @param value The integer to add.
          */
@@ -288,8 +351,7 @@ public class VxRenderDataStore {
         }
 
         /**
-         * Resets the list size to zero.
-         * Does not release the backing array memory.
+         * Resets the size to 0.
          */
         public void clear() {
             size = 0;

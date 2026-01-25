@@ -1,90 +1,97 @@
 #version 150
 
 /**
- * Standard Vertex Shader.
- * Transforms vertices to View/Clip space and prepares data for the fragment shader.
+ * VelGFX - Vanilla Extended Vertex Shader (Instanced)
+ *
+ * This shader implements the hardware-instanced rendering pipeline.
+ * It replaces standard uniform-based rendering with attribute-based batching,
+ * reading model matrices and auxiliary data directly from the instance buffer.
+ *
+ * @author xI-Mx-Ix
  */
 
-// --- Attributes ---
+// Standard Mesh Attributes (Per-Vertex)
 in vec3 Position;
 in vec4 Color;
-in vec2 UV0;       // Texture Coordinates
-in ivec2 UV1;      // Overlay UV (Integer indices, e.g., for damage flash)
-in ivec2 UV2;      // Lightmap UV (Packed integer 0..240)
+in vec2 UV0;
 in vec3 Normal;
-in vec4 Tangent;   // Tangent vector (xyz) + handedness (w)
+in vec4 Tangent;
 
-// --- Uniforms ---
-uniform mat4 ViewMat;   // The camera view matrix (World -> View)
-uniform mat4 ModelMat;  // The object model matrix (Local -> World)
-uniform mat4 ProjMat;   // The projection matrix (View -> Clip)
+// Instanced Attributes (Per-Instance)
+// These attributes advance once per instance (Divisor 1).
+// The Model Matrix is split into 4 column vectors (Attribute locations 10-13).
+in mat4 i_ModelMat;
 
-// --- Outputs ---
-out vec3 v_PositionView; // Vertex position in View Space (for fog)
-out vec4 v_Color;        // Per-vertex color (includes tint)
-out vec2 v_TexCoord0;    // Main texture coordinates
+// Packed auxiliary data (Attribute 14).
+// x = Packed Lightmap Coordinates (BlockLight | SkyLight)
+// y = Packed Overlay Coordinates (U | V)
+in ivec2 i_AuxData;
 
-// The TBN matrix transforms vectors from Tangent Space to View Space.
+// Global Uniforms
+uniform mat4 ViewMat;
+uniform mat4 ProjMat;
+
+// Vertex Shader Outputs
+out vec3 v_PositionView;
+out vec4 v_Color;
+out vec2 v_TexCoord0;
 out mat3 v_TBN;
 
-// passed as 'flat' to prevent interpolation, as these are integer array indices
+// Flat qualifier prevents interpolation for integer indices
 flat out ivec2 v_OverlayUV;
-
-// normalized lightmap coordinates (0.0 - 1.0)
 out vec2 v_LightMapUV;
 
+/**
+ * Entry point.
+ * Transforms vertices to clip space and prepares TBN and texture data for the fragment stage.
+ */
 void main() {
-    // 1. Calculate ModelView Matrix
-    // We combine the scene's View Matrix with the object's Model Matrix.
-    mat4 ModelViewMat = ViewMat * ModelMat;
+    // Calculate the ModelView Matrix by combining the global View Matrix
+    // with the per-instance Model Matrix from the buffer.
+    mat4 ModelViewMat = ViewMat * i_ModelMat;
 
-    // 2. Calculate Normal Matrix
-    // To handle non-uniform scaling correctly, we must use the Inverse-Transpose
-    // of the ModelView matrix. This ensures lighting normals remain perpendicular to surfaces.
-    // We cast to mat3 to only affect rotation/scaling, ignoring translation.
+    // Calculate the Normal Matrix to transform normals into View Space.
+    // The inverse-transpose is required to handle non-uniform scaling correctly.
+    // We cast to mat3 to discard translation components before inversion.
     mat3 NormalMat = transpose(inverse(mat3(ModelViewMat)));
 
-    // 3. Transform Position to View Space
-    // This represents the position relative to the camera.
+    // Transform local position to View Space (relative to camera)
     vec4 viewPos = ModelViewMat * vec4(Position, 1.0);
     v_PositionView = viewPos.xyz;
 
-    // 4. Calculate TBN Matrix (Robust)
-    // We transform Normal and Tangent to View Space using the calculated Normal Matrix.
+    // Transform to Clip Space for the rasterizer
+    gl_Position = ProjMat * viewPos;
+
+    // TBN Matrix Construction
+    // Transform Normal and Tangent to View Space
     vec3 n = normalize(NormalMat * Normal);
     vec3 t = normalize(NormalMat * Tangent.xyz);
 
-    // Gram-Schmidt process: Re-orthogonalize T with respect to N.
-    // During morph animations, T and N can become parallel (degenerate state).
-    // If dot(t, n) is ~1.0, the result of (t - dot * n) is a zero vector.
+    // Gram-Schmidt Orthogonalization
+    // Re-aligns the tangent vector to be perfectly perpendicular to the normal,
+    // correcting interpolation errors or mesh artifacts.
     float dotProduct = dot(t, n);
-
-    // Only re-orthogonalize if vectors are not parallel.
     if (abs(dotProduct) < 0.99) {
         t = normalize(t - dotProduct * n);
     }
 
-    // Calculate Bitangent
-    // The 'w' component of the tangent stores the handedness of the coordinate system.
+    // Calculate Bitangent using the cross product and handedness (w component)
     vec3 b = cross(n, t) * Tangent.w;
 
-    // Construct the matrix
+    // Construct the final TBN matrix
     v_TBN = mat3(t, b, n);
 
-    // 5. Pass basic attributes
+    // Pass standard color and texture coordinates
     v_Color = Color;
     v_TexCoord0 = UV0;
 
-    // 6. Pass Overlay Coordinates
-    // These are integer indices pointing to pixels in the overlay texture (Sampler1).
-    // We pass them without interpolation (flat) to ensure we hit the exact pixel center.
-    v_OverlayUV = UV1;
+    // Unpack Overlay UVs from the high/low bits of the integer (i_AuxData.y)
+    int packedOverlay = i_AuxData.y;
+    v_OverlayUV = ivec2(packedOverlay & 0xFFFF, packedOverlay >> 16);
 
-    // 7. Calculate Lightmap Coordinates
-    // Minecraft passes light values as shorts (0 to 240).
-    // We normalize this to the 0.0 - 1.0 range expected by texture().
-    v_LightMapUV = vec2(UV2) / 256.0;
-
-    // 8. Final Clip Space Position
-    gl_Position = ProjMat * viewPos;
+    // Unpack Lightmap UVs from the integer (i_AuxData.x)
+    // Convert from Minecraft's 0-240 integer range to normalized 0.0-1.0 floats
+    int packedLight = i_AuxData.x;
+    vec2 lightCoords = vec2(packedLight & 0xFFFF, packedLight >> 16);
+    v_LightMapUV = lightCoords / 256.0;
 }

@@ -101,7 +101,8 @@ public class VxSkinnedResultMesh implements IVxRenderableMesh {
                     relativeCmd.material,
                     poseStack.last().pose(),
                     poseStack.last().normal(),
-                    packedLight
+                    packedLight,
+                    0 // Default overlay UV (0) for skinned mesh rendering
             );
         }
     }

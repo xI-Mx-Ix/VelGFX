@@ -14,13 +14,18 @@ import java.util.Arrays;
 import java.util.Comparator;
 
 /**
- * The core rendering pipeline manager (Singleton).
+ * The central rendering pipeline manager (Singleton).
  * <p>
- * This class orchestrates the entire rendering process. It acts as the central hub that manages
- * the global {@link VxRenderDataStore} and determines which specific backend pipeline
- * ({@link VxVanillaRenderer} or {@link VxIrisRenderer}) should be used to execute the draw calls.
+ * This class orchestrates the high-level rendering flow for VelGFX. It acts as the bridge
+ * between the data collection phase (recording draw calls) and the execution phase (dispatching to GPU).
  * <p>
- * It also handles the necessary sorting logic for translucent geometry.
+ * Key Responsibilities:
+ * <ul>
+ *     <li>Manages the global {@link VxRenderDataStore} which holds all frame data.</li>
+ *     <li>Determines which backend pipeline to use (Vanilla Instanced or Iris Compatibility).</li>
+ *     <li>Handles sorting of transparent geometry (Painter's Algorithm).</li>
+ *     <li>Dispatches render passes (Opaque, Cutout, Translucent).</li>
+ * </ul>
  *
  * @author xI-Mx-Ix
  */
@@ -32,28 +37,28 @@ public class VxRenderPipeline {
     private static VxRenderPipeline instance;
 
     /**
-     * The global data store containing all queued draw commands for the current frame.
+     * The central data store for render commands.
      */
     private final VxRenderDataStore dataStore;
 
     /**
-     * The pipeline implementation used for the standard Minecraft rendering environment.
+     * The optimized backend for Vanilla rendering (supports Instancing).
      */
     private final VxVanillaRenderer vanillaPipeline;
 
     /**
-     * The pipeline implementation used when a shader pack is detected.
+     * The compatibility backend for Iris/Shaderpacks.
      */
     private final VxIrisRenderer irisPipeline;
 
     /**
-     * A reusable comparator instance used to sort translucent objects by depth.
+     * Helper object for sorting translucent draw calls by depth.
      */
     private final TranslucentSorter translucentSorter;
 
     /**
-     * Private constructor to enforce the Singleton pattern.
-     * Initializes the sub-pipelines and the data store.
+     * Private constructor to enforce Singleton pattern.
+     * Initializes the sub-components of the pipeline.
      */
     private VxRenderPipeline() {
         this.dataStore = new VxRenderDataStore();
@@ -63,9 +68,9 @@ public class VxRenderPipeline {
     }
 
     /**
-     * Retrieves the global singleton instance of the {@code VxRenderPipeline}.
+     * Retrieves the global instance of the rendering pipeline.
      *
-     * @return The active pipeline instance.
+     * @return The singleton instance.
      */
     public static synchronized VxRenderPipeline getInstance() {
         if (instance == null) {
@@ -75,89 +80,97 @@ public class VxRenderPipeline {
     }
 
     /**
-     * Resets the entire pipeline state to prepare for a new frame.
+     * Resets the entire pipeline state for the next frame.
      * <p>
-     * This clears the {@link VxRenderDataStore} and resets the state tracking caches within
-     * the sub-pipelines. Must be called exactly once at the beginning of the render frame.
+     * This clears the data store and resets the internal state of the sub-renderers.
+     * Must be called exactly once per frame, typically at the start of rendering.
      */
     public void reset() {
         dataStore.reset();
-        // Reset pipelines blend state caches to ensure no state leakage between frames
         vanillaPipeline.reset();
         irisPipeline.reset();
     }
 
     /**
-     * Provides access to the global data store.
-     * This is used by external systems to record new draw calls into the queue.
+     * Provides access to the render data store.
+     * Used by meshes and entities to record their draw commands.
      *
-     * @return The current {@link VxRenderDataStore} instance.
+     * @return The active {@link VxRenderDataStore}.
      */
     public VxRenderDataStore getStore() {
         return dataStore;
     }
 
     /**
-     * Flushes all opaque and cutout geometry to the GPU.
+     * Processes and renders all Opaque and Cutout geometry.
      * <p>
-     * This method detects if a shader pack is active and dispatches the execution to the appropriate
-     * pipeline. Opaque and Cutout objects are rendered first as they write to the depth buffer,
-     * providing occlusion for subsequent passes.
+     * This method performs the following steps:
+     * <ol>
+     *     <li>Detects if a Shaderpack is active to select the correct backend.</li>
+     *     <li>Sorts the Opaque and Cutout buckets to optimize for Instancing (grouping identical meshes).</li>
+     *     <li>Dispatches the sorted buckets to the selected renderer.</li>
+     * </ol>
      *
-     * @param viewMatrix       The camera's view matrix (World Space -> Camera Space).
-     * @param projectionMatrix The camera's projection matrix (Camera Space -> Clip Space).
+     * @param viewMatrix       The camera's View Matrix.
+     * @param projectionMatrix The camera's Projection Matrix.
      */
     public void flushOpaque(Matrix4f viewMatrix, Matrix4f projectionMatrix) {
         boolean isIris = VxShaderDetector.isShaderpackActive();
 
+        // Sort the data store to group identical materials and meshes.
+        // This is crucial for efficient Instanced Rendering in the Vanilla pipeline.
+        dataStore.sortForInstancing();
+
+        // Flush Opaque (Solid) geometry first (Optimal for Z-Buffer).
         if (dataStore.opaqueBucket.size > 0) {
             dispatch(isIris, dataStore.opaqueBucket, viewMatrix, projectionMatrix, false);
         }
+
+        // Flush Cutout (Alpha Test) geometry second.
         if (dataStore.cutoutBucket.size > 0) {
             dispatch(isIris, dataStore.cutoutBucket, viewMatrix, projectionMatrix, false);
         }
     }
 
     /**
-     * Sorts and flushes all translucent geometry to the GPU.
+     * Processes and renders all Translucent geometry.
      * <p>
-     * Translucent objects must be rendered from furthest to nearest (Painter's Algorithm) to ensure
-     * that alpha blending functions correctly. This method performs a CPU-side sort of the
-     * indices in the translucent bucket before dispatching them.
+     * Translucent objects require strict Back-to-Front sorting to blend correctly.
+     * This method sorts the translucent bucket based on distance to the camera before rendering.
      *
-     * @param viewMatrix       The camera's view matrix.
-     * @param projectionMatrix The camera's projection matrix.
-     * @param cameraPosition   The absolute world position of the camera, used for distance calculations.
+     * @param viewMatrix       The camera's View Matrix.
+     * @param projectionMatrix The camera's Projection Matrix.
+     * @param cameraPosition   The world position of the camera (used for sorting).
      */
     public void flushTranslucent(Matrix4f viewMatrix, Matrix4f projectionMatrix, Vector3f cameraPosition) {
         if (dataStore.translucentBucket.size == 0) return;
 
-        // 1. Sort the bucket indices based on distance to camera
+        // Prepare the sorter with the current camera position.
         VxRenderDataStore.IntList bucket = dataStore.translucentBucket;
         translucentSorter.setCameraPosition(cameraPosition);
 
-        // We must box the primitives to Integer[] to use Arrays.sort with a custom comparator.
-        // While boxing has overhead, it is acceptable for the typically smaller number of transparent items.
+        // Box indices to Integer[] to use Arrays.sort with a custom Comparator.
+        // (Performance note: A primitive implementation would be faster, but this is sufficient for typical translucent counts).
         Integer[] indices = new Integer[bucket.size];
         for (int i = 0; i < bucket.size; i++) indices[i] = bucket.data[i];
 
         Arrays.sort(indices, translucentSorter);
 
-        // Write the sorted indices back into the primitive array for the renderer
+        // Write sorted indices back to the primitive bucket.
         for (int i = 0; i < bucket.size; i++) bucket.data[i] = indices[i];
 
-        // 2. Dispatch with the translucent flag set to true
+        // Dispatch with translucent flag = true.
         dispatch(VxShaderDetector.isShaderpackActive(), bucket, viewMatrix, projectionMatrix, true);
     }
 
     /**
-     * Internal helper to delegate execution to the correct pipeline.
+     * Delegates the render command to the appropriate backend pipeline.
      *
-     * @param isIris      True if a shader pack is active.
-     * @param bucket      The list of draw call indices to execute.
-     * @param view        The view matrix.
-     * @param proj        The projection matrix.
-     * @param translucent True if rendering the translucent pass (affects blending state).
+     * @param isIris      True if Iris/Shaderpack is active.
+     * @param bucket      The list of draw calls to execute.
+     * @param view        The View Matrix.
+     * @param proj        The Projection Matrix.
+     * @param translucent True if rendering the translucent pass.
      */
     private void dispatch(boolean isIris, VxRenderDataStore.IntList bucket, Matrix4f view, Matrix4f proj, boolean translucent) {
         if (isIris) {
@@ -168,10 +181,8 @@ public class VxRenderPipeline {
     }
 
     /**
-     * A Comparator implementation for Back-to-Front sorting of draw calls.
-     * <p>
-     * It compares two draw call indices by calculating the squared distance from the camera
-     * to the translation component of their respective model matrices.
+     * A Comparator implementation that sorts draw calls based on distance from the camera.
+     * Used for the Translucent pass (Painter's Algorithm).
      */
     private static class TranslucentSorter implements Comparator<Integer> {
         private final VxRenderDataStore store;
@@ -180,14 +191,14 @@ public class VxRenderPipeline {
         /**
          * Constructs the sorter with a reference to the data store.
          *
-         * @param store The data store containing the model matrices.
+         * @param store The data store containing model matrices.
          */
         public TranslucentSorter(VxRenderDataStore store) {
             this.store = store;
         }
 
         /**
-         * Updates the reference camera position for the current frame's sort.
+         * Updates the camera position used for distance calculations.
          *
          * @param pos The camera position vector.
          */
@@ -199,10 +210,8 @@ public class VxRenderPipeline {
 
         @Override
         public int compare(Integer idx1, Integer idx2) {
-            // Extract translation components from the flattened 4x4 model matrices.
-            // Matrix Layout: m00...m30, m31, m32 (Columns 0-3).
-            // The translation vector is stored at indices 12, 13, 14 of the 16-float block.
-
+            // Retrieve the translation components (Column 3) from the Model Matrix.
+            // Layout: m00..m30, m31, m32. Translation starts at index 12.
             int base1 = idx1 * 16;
             int base2 = idx2 * 16;
 
@@ -214,20 +223,22 @@ public class VxRenderPipeline {
             float y2 = store.modelMatrices[base2 + 13];
             float z2 = store.modelMatrices[base2 + 14];
 
-            // Calculate squared distances (faster than sqrt)
+            // Calculate squared Euclidean distance to camera.
             float distSq1 = (camX - x1) * (camX - x1) + (camY - y1) * (camY - y1) + (camZ - z1) * (camZ - z1);
             float distSq2 = (camX - x2) * (camX - x2) + (camY - y2) * (camY - y2) + (camZ - z2) * (camZ - z2);
 
-            // Sort Descending (Larger distance -> Smaller distance) for Back-to-Front
+            // Sort Descending (Furthest first).
             return Float.compare(distSq2, distSq1);
         }
     }
 
     /**
-     * Captures the current OpenGL texture bindings for units 0, 1, and 2.
-     * This allows us to modify them during rendering and restore them exactly later.
+     * Captures the current OpenGL texture bindings for Units 0, 1, and 2.
+     * <p>
+     * This utility allows the pipeline to modify texture state during rendering
+     * and restore it perfectly afterwards, ensuring compatibility with external code.
      *
-     * @return An integer array containing the active texture unit and the IDs bound to units 0-2.
+     * @return An array containing the active texture unit index and the bound texture IDs.
      */
     public int[] captureTextureState() {
         int[] state = new int[4];
@@ -246,9 +257,9 @@ public class VxRenderPipeline {
     }
 
     /**
-     * Restores the OpenGL texture bindings from a previously captured state.
+     * Restores the OpenGL texture bindings from a captured state array.
      *
-     * @param state The integer array returned by {@link #captureTextureState()}.
+     * @param state The state array returned by {@link #captureTextureState()}.
      */
     public void restoreTextureState(int[] state) {
         GL13.glActiveTexture(GL13.GL_TEXTURE2);
