@@ -74,6 +74,12 @@ public class VxTempCache {
     public final FloatBuffer floatBuffer16 = BufferUtils.createFloatBuffer(16);
 
     /**
+     * A reusable FloatBuffer with capacity 9 (sufficient for 3x3 matrices).
+     * <b>Note:</b> Caller must call {@code .clear()} before writing and {@code .flip()} before reading.
+     */
+    public final FloatBuffer floatBuffer9 = BufferUtils.createFloatBuffer(9);
+
+    /**
      * Private constructor to enforce ThreadLocal usage.
      */
     private VxTempCache() {

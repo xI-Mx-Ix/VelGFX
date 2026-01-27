@@ -4,7 +4,6 @@
  */
 package net.xmx.velgfx.renderer.pipeline;
 
-import com.mojang.blaze3d.shaders.Uniform;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
@@ -51,19 +50,23 @@ public class VxIrisRenderer {
 
     /**
      * The texture unit index (0-31) where the current shader expects the Normal Map.
-     * Discovered dynamically via {@code glGetUniformLocation}.
+     * <p>
+     * Value is -1 if the shader does not use a normal map or the uniform was not found.
      */
-    private int texUnitNormal = -1;
+    private int unitNormal = -1;
 
     /**
      * The texture unit index (0-31) where the current shader expects the Specular Map.
-     * Discovered dynamically via {@code glGetUniformLocation}.
+     * <p>
+     * Value is -1 if the shader does not use a specular map or the uniform was not found.
      */
-    private int texUnitSpecular = -1;
+    private int unitSpecular = -1;
 
     /**
      * The uniform location ID for the Normal Matrix in the current shader.
-     * Iris typically uses "iris_NormalMat", but we fallback to standard names if needed.
+     * <p>
+     * Iris-compatible shaders use this (typically "iris_NormalMat") to transform normals
+     * from Model Space to View Space correctly.
      */
     private int locNormalMat = -1;
 
@@ -73,7 +76,10 @@ public class VxIrisRenderer {
      */
     public void reset() {
         VxBlendMode.resetState();
-        cachedProgramId = -1;
+        this.cachedProgramId = -1;
+        this.unitNormal = -1;
+        this.unitSpecular = -1;
+        this.locNormalMat = -1;
     }
 
     /**
@@ -113,7 +119,7 @@ public class VxIrisRenderer {
         // 3. Dynamic Shader Analysis.
         // We inspect the currently bound OpenGL program (which is now the Shaderpack's program)
         // to find out where we should put our Normal and Specular maps.
-        analyzeActiveShader();
+        updateShaderInfo();
 
         // 4. Configure Blend and Depth State.
         if (translucent) {
@@ -158,14 +164,6 @@ public class VxIrisRenderer {
                 auxModel.set(matrixBuffer);
                 auxModelView.set(viewMatrix).mul(auxModel);
 
-                // Normal Matrix: ViewRotation * StoredNormalMatrix
-                matrixBuffer.clear();
-                matrixBuffer.put(store.normalMatrices, ptr * 9, 9);
-                matrixBuffer.flip();
-                auxNormalMat.set(matrixBuffer);
-
-                auxNormalView.set(auxViewRot).mul(auxNormalMat);
-
                 // Upload ModelView Matrix via the standard ShaderInstance helper.
                 if (shader.MODEL_VIEW_MATRIX != null) {
                     shader.MODEL_VIEW_MATRIX.set(auxModelView);
@@ -174,6 +172,16 @@ public class VxIrisRenderer {
                 // Upload Normal Matrix (if we found a compatible uniform location during analysis).
                 // This allows the shader pack to receive correct normal data.
                 if (this.locNormalMat != -1) {
+                    // Load the normal matrix from the data store
+                    matrixBuffer.clear();
+                    matrixBuffer.put(store.normalMatrices, ptr * 9, 9);
+                    matrixBuffer.flip();
+                    auxNormalMat.set(matrixBuffer);
+
+                    // Transform to View Space: ViewRotation * StoredNormalMatrix
+                    auxNormalView.set(auxViewRot).mul(auxNormalMat);
+
+                    // Write to buffer and upload
                     matrixBuffer.clear();
                     auxNormalView.get(matrixBuffer);
                     matrixBuffer.flip();
@@ -219,8 +227,8 @@ public class VxIrisRenderer {
                 mat.blendMode.apply();
                 shader.apply();
 
-                // Bind Material Textures to the units discovered by analyzeActiveShader().
-                bindIrisTextures(mat);
+                // Bind Material Textures to the units discovered by updateShaderInfo().
+                bindTextures(mat);
 
                 // Issue Draw Call.
                 GL32.glDrawElementsBaseVertex(
@@ -259,45 +267,44 @@ public class VxIrisRenderer {
     /**
      * Inspects the currently active OpenGL shader program (provided by the shader pack).
      * <p>
-     * If the program ID has changed since the last frame, this method queries the
-     * locations of specific uniforms (like "normals", "specular", and "iris_NormalMat").
-     * This allows us to map our texture data to the correct Texture Units that the
-     * shader pack expects to read from.
+     * If the program ID has changed since the last frame, this method resolves and caches
+     * the locations and texture units of relevant standard uniforms.
+     * This allows us to bind our textures to the correct texture units expected by the shader.
      */
-    private void analyzeActiveShader() {
+    private void updateShaderInfo() {
         int currentProgramId = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
 
         // Only re-analyze if the program has changed.
-        if (currentProgramId != this.cachedProgramId) {
-            this.cachedProgramId = currentProgramId;
-
-            // Find texture units for Normal and Specular maps.
-            // We look up the uniform location, and then get the integer value of that uniform,
-            // which tells us which Texture Unit (0-31) the sampler is bound to.
-            int locNormals = GL20.glGetUniformLocation(currentProgramId, "normals");
-            int locSpecular = GL20.glGetUniformLocation(currentProgramId, "specular");
-
-            this.texUnitNormal = (locNormals != -1) ? GL20.glGetUniformi(currentProgramId, locNormals) : -1;
-            this.texUnitSpecular = (locSpecular != -1) ? GL20.glGetUniformi(currentProgramId, locSpecular) : -1;
-
-            // Locate the Normal Matrix uniform.
-            // Iris generally uses "iris_NormalMat", but we check common fallbacks just in case.
-            this.locNormalMat = Uniform.glGetUniformLocation(currentProgramId, "iris_NormalMat");
-            if (this.locNormalMat == -1) {
-                this.locNormalMat = Uniform.glGetUniformLocation(currentProgramId, "NormalMat");
-            }
-            if (this.locNormalMat == -1) {
-                this.locNormalMat = Uniform.glGetUniformLocation(currentProgramId, "normalMatrix");
-            }
+        if (currentProgramId == this.cachedProgramId) {
+            return;
         }
+
+        this.cachedProgramId = currentProgramId;
+
+        // Resolve normal map sampler uniform.
+        int locNormals = GL20.glGetUniformLocation(currentProgramId, "normals");
+        this.unitNormal = (locNormals != -1)
+                ? GL20.glGetUniformi(currentProgramId, locNormals)
+                : -1;
+
+        // Resolve specular map sampler uniform.
+        int locSpecular = GL20.glGetUniformLocation(currentProgramId, "specular");
+        this.unitSpecular = (locSpecular != -1)
+                ? GL20.glGetUniformi(currentProgramId, locSpecular)
+                : -1;
+
+        // Resolve normal matrix uniform.
+        int locNormalMat = GL20.glGetUniformLocation(currentProgramId, "iris_NormalMat");
+        this.locNormalMat = locNormalMat;
     }
+
 
     /**
      * Binds the material's textures to the specific texture units required by the active shader.
      *
      * @param mat The material containing the OpenGL texture IDs.
      */
-    private void bindIrisTextures(VxMaterial mat) {
+    private void bindTextures(VxMaterial mat) {
         // 0. Albedo -> Unit 0 (Standard convention for almost all shaders).
         GL13.glActiveTexture(GL13.GL_TEXTURE0);
         if (mat.albedoMapGlId != -1) {
@@ -308,15 +315,16 @@ public class VxIrisRenderer {
 
         // 1. Normal Map -> Targeted Unit (Dynamic).
         // If the shader pack requests a normal map, bind it to the discovered unit.
-        if (this.texUnitNormal != -1 && mat.normalMapGlId != -1) {
-            GL13.glActiveTexture(GL13.GL_TEXTURE0 + this.texUnitNormal);
+        // We ensure unitNormal > 0 to avoid overwriting the Albedo on Unit 0.
+        if (this.unitNormal > 0 && mat.normalMapGlId != -1) {
+            GL13.glActiveTexture(GL13.GL_TEXTURE0 + this.unitNormal);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, mat.normalMapGlId);
         }
 
         // 2. Specular Map -> Targeted Unit (Dynamic).
         // If the shader pack requests a specular map, bind it to the discovered unit.
-        if (this.texUnitSpecular != -1 && mat.specularMapGlId != -1) {
-            GL13.glActiveTexture(GL13.GL_TEXTURE0 + this.texUnitSpecular);
+        if (this.unitSpecular > 0 && mat.specularMapGlId != -1) {
+            GL13.glActiveTexture(GL13.GL_TEXTURE0 + this.unitSpecular);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, mat.specularMapGlId);
         }
 
@@ -330,12 +338,12 @@ public class VxIrisRenderer {
      * use these texture units for other purposes.
      */
     private void cleanupTextureUnits() {
-        if (this.texUnitNormal != -1) {
-            GL13.glActiveTexture(GL13.GL_TEXTURE0 + this.texUnitNormal);
+        if (this.unitNormal > 0) {
+            GL13.glActiveTexture(GL13.GL_TEXTURE0 + this.unitNormal);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
         }
-        if (this.texUnitSpecular != -1) {
-            GL13.glActiveTexture(GL13.GL_TEXTURE0 + this.texUnitSpecular);
+        if (this.unitSpecular > 0) {
+            GL13.glActiveTexture(GL13.GL_TEXTURE0 + this.unitSpecular);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
         }
         GL13.glActiveTexture(GL13.GL_TEXTURE0);
