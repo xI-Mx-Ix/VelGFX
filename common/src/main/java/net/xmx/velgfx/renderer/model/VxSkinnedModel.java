@@ -18,6 +18,7 @@ import net.xmx.velgfx.renderer.model.animation.VxAnimation;
 import net.xmx.velgfx.renderer.model.morph.VxMorphController;
 import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
 import net.xmx.velgfx.renderer.util.VxGlGarbageCollector;
+import net.xmx.velgfx.renderer.util.VxTempCache;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL40;
@@ -64,9 +65,6 @@ public class VxSkinnedModel extends VxModel {
      * Handle to the cleaner task.
      */
     private final Cleaner.Cleanable cleanable;
-
-    // Scratch matrix to avoid allocation when fetching root transform
-    private final Matrix4f rootTransformCache = new Matrix4f();
 
     /**
      * Constructs a new skinned model.
@@ -151,8 +149,9 @@ public class VxSkinnedModel extends VxModel {
 
         // 2. Upload the Root Transform (Model Matrix) for unskinned vertices.
         // Index 0 represents the root node in the topological sort.
-        skeleton.getGlobalTransform(0, rootTransformCache);
-        shader.loadBaseTransform(rootTransformCache);
+        Matrix4f rootTransform = VxTempCache.get().mat4_1;
+        skeleton.getGlobalTransform(0, rootTransform);
+        shader.loadBaseTransform(rootTransform);
 
         // 3. Configure Morph Targets and upload active weights.
         // We resolve the base vertex offset to ensure the shader reads the correct TBO data.

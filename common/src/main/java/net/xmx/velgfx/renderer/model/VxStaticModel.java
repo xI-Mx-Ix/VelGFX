@@ -9,6 +9,7 @@ import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.mesh.arena.VxArenaMesh;
 import net.xmx.velgfx.renderer.model.animation.VxAnimation;
 import net.xmx.velgfx.renderer.model.skeleton.VxSkeleton;
+import net.xmx.velgfx.renderer.util.VxTempCache;
 import org.joml.Matrix4f;
 
 import java.util.List;
@@ -29,9 +30,6 @@ public class VxStaticModel extends VxModel {
      * Map linking Bone Indices to specific Mesh Draw Commands.
      */
     private final Map<Integer, List<VxDrawCommand>> boneDrawCommands;
-
-    // Scratch matrix
-    private final Matrix4f transformCache = new Matrix4f();
 
     /**
      * Constructs a new static model.
@@ -74,8 +72,10 @@ public class VxStaticModel extends VxModel {
                     poseStack.pushPose();
 
                     // Retrieve global transform directly from SoA
-                    skeleton.getGlobalTransform(i, transformCache);
-                    poseStack.mulPose(transformCache);
+                    Matrix4f transform = VxTempCache.get().mat4_1;
+                    skeleton.getGlobalTransform(i, transform);
+
+                    poseStack.mulPose(transform);
 
                     // Submit commands
                     arenaMesh.queueRenderSubset(poseStack, packedLight, commands);
