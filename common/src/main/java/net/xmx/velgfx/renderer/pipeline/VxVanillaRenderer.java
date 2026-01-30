@@ -314,8 +314,15 @@ public class VxVanillaRenderer {
         float moonBrightness = Math.max(0.0f, moonHeight + 0.1f) * 0.5f;
 
         color0.set(sunBrightness, sunBrightness, sunBrightness);
-        // Moon light gets a slight blue tint (Z component + 0.1).
-        color1.set(moonBrightness, moonBrightness, moonBrightness + 0.1f);
+
+        // Apply a blue tint to the moon light (Z component + 0.1).
+        // Only apply the tint if the moon is actually bright enough to be visible,
+        // ensuring total darkness (no ambient blue reflection) during the day.
+        if (moonBrightness > 0.001f) {
+            color1.set(moonBrightness, moonBrightness, moonBrightness + 0.1f);
+        } else {
+            color1.set(0.0f, 0.0f, 0.0f);
+        }
 
         // Transform light directions to View Space.
         // We take the View Matrix, strip the translation, and apply it to the vectors.
