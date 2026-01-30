@@ -5,12 +5,12 @@ in vec2 v_UV;
 // Multiple Render Targets (MRT) Output
 // Target 0: The combined Albedo map (Base Color + baked AO + baked Emissive)
 layout (location = 0) out vec4 out_Albedo;
-// Target 1: The packed Specular map (LabPBR Standard)
+// Target 1: The packed Specular map (LabPBR 1.3 Standard)
 layout (location = 1) out vec4 out_Specular;
 
 // --- Source Textures ---
 uniform sampler2D u_TexAlbedo;
-uniform sampler2D u_TexMR;        // Roughness (G), Metallic (B)
+uniform sampler2D u_TexMR;        // glTF: Roughness (G), Metallic (B)
 uniform sampler2D u_TexOcclusion; // Occlusion (R)
 uniform sampler2D u_TexEmissive;
 
@@ -28,10 +28,18 @@ uniform float u_MetallicFactor;
 uniform float u_OcclusionStrength;
 
 /**
- * Fragment shader for baking PBR textures.
+ * Fragment shader for baking PBR textures into LabPBR 1.3 format.
  *
- * This shader consolidates separate glTF textures and factors into optimized
- * maps required by the rendering pipeline (specifically LabPBR format).
+ * This shader converts glTF PBR textures into the LabPBR 1.3 standard:
+ *
+ * Specular Map (_s):
+ *   Red   = Perceptual Smoothness (convert from linear roughness)
+ *   Green = F0 / Reflectance (for dielectrics) OR Metal flag (230-255)
+ *   Blue  = Porosity/SSS (0 for standard materials)
+ *   Alpha = Emissive Strength (0-254, linear, NOT 255)
+ *
+ * LabPBR 1.3 changes from 1.2:
+ *   - F0 is now stored LINEARLY (not sqrt-encoded)
  */
 void main() {
     // --- 1. Fetch Source Values ---
@@ -43,15 +51,13 @@ void main() {
     }
 
     // Metallic-Roughness (glTF: Green=Roughness, Blue=Metallic)
-    vec3 mrSample = vec3(1.0); // Default to white to preserve scalar factors
+    vec2 mrSample = vec2(1.0, 0.0); // Default: Roughness=1.0, Metallic=0.0
     if (u_HasMR) {
-        mrSample = texture(u_TexMR, v_UV).rgb;
+        vec3 mrTexture = texture(u_TexMR, v_UV).rgb;
+        mrSample = vec2(mrTexture.g, mrTexture.b); // glTF standard channels
     }
 
     // Occlusion (glTF: Red=Occlusion)
-    // If explicit occlusion map exists, use it.
-    // Otherwise, check if MR map is treated as ORM (common optimization),
-    // but strictly speaking, we rely on the u_TexOcclusion slot here.
     float occlusionVal = 1.0;
     if (u_HasOcclusion) {
         occlusionVal = texture(u_TexOcclusion, v_UV).r;
@@ -65,11 +71,10 @@ void main() {
 
     // --- 2. Calculate Final Albedo (MRT 0) ---
 
-    // Bake Ambient Occlusion into the color map
-    // Formula: Color * (1.0 + Strength * (AO - 1.0))
-    float finalAo = 1.0 + u_OcclusionStrength * (occlusionVal - 1.0);
-
-    vec3 albedoRgb = baseColor.rgb * finalAo;
+    // Apply Ambient Occlusion using glTF formula
+    // Formula: Color * mix(1.0, AO, occlusionStrength)
+    float aoFactor = mix(1.0, occlusionVal, u_OcclusionStrength);
+    vec3 albedoRgb = baseColor.rgb * aoFactor;
 
     // Bake Emissive Color (Additive)
     // Formula: Color + (EmissiveTexture * EmissiveFactor)
@@ -77,23 +82,63 @@ void main() {
 
     out_Albedo = vec4(albedoRgb, baseColor.a);
 
-    // --- 3. Calculate Specular / LabPBR (MRT 1) ---
+    // --- 3. Calculate LabPBR 1.3 Specular Map (MRT 1) ---
 
-    // Combine texture channels with scalar factors
-    float roughness = mrSample.g * u_RoughnessFactor;
-    float metallic = mrSample.b * u_MetallicFactor;
+    // Apply glTF factors
+    float linearRoughness = clamp(mrSample.r * u_RoughnessFactor, 0.0, 1.0);
+    float metallic = clamp(mrSample.g * u_MetallicFactor, 0.0, 1.0);
 
-    // LabPBR Encoding:
-    // Red   = Smoothness (1.0 - Roughness)
-    // Green = Metallic
-    // Blue  = Reserved (0.0)
-    // Alpha = Emissive Strength (Luminance based on factors)
+    // === RED CHANNEL: Perceptual Smoothness ===
+    // LabPBR 1.3: perceptualSmoothness = 1.0 - sqrt(linearRoughness)
+    // This is the INVERSE of: linearRoughness = pow(1.0 - perceptualSmoothness, 2.0)
+    float perceptualSmoothness = 1.0 - sqrt(linearRoughness);
 
-    float smoothness = 1.0 - roughness;
+    // === GREEN CHANNEL: F0 / Reflectance (or Metal ID) ===
+    // glTF uses metallic workflow: metallic=0 → dielectric, metallic=1 → conductor
+    // For LabPBR we need to encode F0 or use hardcoded metal values (230-255)
 
-    // Calculate Perceptual Luminance for Emissive Strength
+    float f0_channel;
+
+    if (metallic > 0.5) {
+        // Material is metallic
+        // Use hardcoded metal value 255 (albedo-based F0)
+        // This tells LabPBR shaders to use albedo as F0
+        f0_channel = 255.0;
+    } else {
+        // Material is dielectric
+        // Calculate F0 for dielectrics (typically ~0.04 for most materials)
+        // glTF spec: F0 = 0.04 for dielectrics
+        // LabPBR stores F0 linearly in range [0, 229] → value/255
+        // F0 = 0.04 → store as: 0.04 * 229 ≈ 9.16 → ~9
+        // For better quality, we use a slightly higher default of 0.04
+        float dielectricF0 = 0.04; // Standard dielectric F0
+
+        // Map to LabPBR range [0, 229]
+        // Linear storage in v1.3: value = F0 * 229
+        f0_channel = dielectricF0 * 229.0;
+    }
+
+    // === BLUE CHANNEL: Porosity/SSS ===
+    // Set to 0 for standard materials (no porosity, no subsurface scattering)
+    float porosity_sss = 0.0;
+
+    // === ALPHA CHANNEL: Emissive Strength ===
+    // LabPBR 1.3: Linear storage, range [0, 254]
+    // IMPORTANT: Value 255 is RESERVED and will be ignored by shaders!
+
     vec3 finalEmissive = emissiveColor * u_EmissiveFactor;
+
+    // Calculate emissive strength as luminance
     float emissiveLuma = dot(finalEmissive, vec3(0.2126, 0.7152, 0.0722));
 
-    out_Specular = vec4(smoothness, metallic, 0.0, emissiveLuma);
+    // Map to LabPBR range [0, 254] and store linearly
+    float emissiveStrength = clamp(emissiveLuma * 254.0, 0.0, 254.0);
+
+    // === Output LabPBR 1.3 Specular Map ===
+    out_Specular = vec4(
+    perceptualSmoothness,  // Red: Perceptual smoothness
+    f0_channel / 255.0,    // Green: F0 (normalized to [0,1] for texture storage)
+    porosity_sss / 255.0,  // Blue: Porosity/SSS (normalized)
+    emissiveStrength / 255.0  // Alpha: Emissive strength (normalized, max 254)
+    );
 }

@@ -39,24 +39,44 @@ public final class VxPBRGenerator {
     }
 
     /**
-     * Generates a 1x1 pixel texture representing scalar Metallic and Roughness values.
+     * Generates a 1x1 pixel texture representing scalar Metallic and Roughness values
+     * according to the LabPBR 1.3 standard.
      * <p>
-     * <b>Format (LabPBR):</b>
+     * <b>LabPBR 1.3 Specular Map Format:</b>
      * <ul>
-     *     <li>Red: Smoothness (1.0 - Roughness)</li>
-     *     <li>Green: Metallic</li>
-     *     <li>Blue: Reserved (0)</li>
-     *     <li>Alpha: Emissive Strength (Must be 0 for fallback, otherwise model glows)</li>
+     *     <li>Red: Perceptual Smoothness (1.0 - sqrt(linearRoughness))</li>
+     *     <li>Green: F0 / Reflectance (linear, 0-229) OR Metal ID (230-255)</li>
+     *     <li>Blue: Porosity/SSS (0 for standard materials)</li>
+     *     <li>Alpha: Emissive Strength (0-254, NEVER 255)</li>
      * </ul>
      *
-     * @param roughness The scalar roughness value (0.0 - 1.0).
+     * @param roughness The scalar linear roughness value (0.0 - 1.0).
      * @param metallic  The scalar metallic value (0.0 - 1.0).
      * @return The OpenGL Texture ID.
      */
     public static int generateMetallicRoughnessMap(float roughness, float metallic) {
-        byte r = (byte) ((1.0f - roughness) * 255.0f);
-        byte g = (byte) (metallic * 255.0f);
-        return create1x1Texture(r, g, (byte) 0, (byte) 0);
+        // Clamp inputs to safe bounds
+        roughness = Math.max(0.0f, Math.min(1.0f, roughness));
+        metallic = Math.max(0.0f, Math.min(1.0f, metallic));
+
+        // R: Perceptual Smoothness (LabPBR 1.3 conversion)
+        float smoothness = 1.0f - (float)Math.sqrt(roughness);
+        byte red = (byte)Math.round(smoothness * 255.0f);
+
+        // G: Reflectance (F0)
+        // Use 255 for metals, or a fixed 4% (0.04) for non-metals
+        byte green = (metallic > 0.5f)
+                ? (byte)255
+                : (byte)Math.round(0.04f * 229.0f);
+
+        // B: Porosity (Unused)
+        byte blue = (byte)0;
+
+        // A: Emissive (Unused)
+        // Important: Stay below 255 to avoid triggering LabPBR special flags
+        byte alpha = (byte)0;
+
+        return create1x1Texture(red, green, blue, alpha);
     }
 
     /**
