@@ -128,6 +128,8 @@ public class VxVanillaRenderer {
             shader.setUniform("Light1_Direction", auxLight1);
             shader.setUniform("Light0_Color", auxColor0);
             shader.setUniform("Light1_Color", auxColor1);
+            shader.setUniform("EmissiveGain", 4.0f);
+            shader.setUniform("Exposure", 1.0f);
 
             // 5. Global Texture Configuration
             // Bind standard textures that are shared across most entities.

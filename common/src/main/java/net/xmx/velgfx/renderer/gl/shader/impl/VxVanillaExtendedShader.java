@@ -101,6 +101,10 @@ public class VxVanillaExtendedShader extends VxShaderProgram {
         createUniform("Light1_Direction");
         createUniform("Light1_Color");
 
+        // Dynamic uniforms for real-time brightness and emissive control.
+        createUniform("EmissiveGain");
+        createUniform("Exposure");
+
         // Material & Environment Settings
         createUniform("ColorModulator");
         createUniform("AlphaCutoff");

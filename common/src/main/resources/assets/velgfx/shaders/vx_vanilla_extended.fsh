@@ -35,6 +35,16 @@ uniform vec3 Light1_Direction; // Light direction in View Space (Moon/Fill)
 uniform vec3 Light1_Color;     // Calculated intensity and color of Moon
 uniform float AlphaCutoff;     // Threshold for alpha testing
 
+/**
+ * Multiplier for surface emissive strength.
+ */
+uniform float EmissiveGain;
+
+/**
+ * Global exposure multiplier.
+ */
+uniform float Exposure;
+
 // Fragment Shader Inputs
 in vec3 v_PositionView;
 in vec4 v_Color;
@@ -46,9 +56,6 @@ in vec2 v_LightMapUV; // Normalized lightmap coordinates
 
 // Fragment Shader Outputs
 out vec4 fragColor;
-
-// Constants
-#define EMISSIVE_GAIN 3.0
 
 /**
  * Entry point.
@@ -120,8 +127,8 @@ void main() {
     vec3 diffuseTerm = dielectricColor * lightMapColor * dirLightFactor;
 
     // B. Emissive Term (Self-Illumination)
-    // The object glows with its own base color, amplified by the gain constant.
-    vec3 emissiveTerm = color.rgb * EMISSIVE_GAIN;
+    // The object glows with its own base color, amplified by the gain uniform.
+    vec3 emissiveTerm = color.rgb * EmissiveGain;
 
     // C. Specular Term (Direct Reflections)
     // Calculates the physical reflection of specific directional light sources.
@@ -140,8 +147,8 @@ void main() {
     // As emissiveStrength approaches 1.0, the object stops receiving shadows and purely glows.
     vec3 baseLighting = mix(diffuseTerm, emissiveTerm, emissiveStrength);
 
-    // Add direct specular highlights on top of the base lighting.
-    vec3 finalRGB = baseLighting + specularTerm;
+    // Combine base lighting with direct specular highlights and apply global exposure scaling.
+    vec3 finalRGB = (baseLighting + specularTerm) * Exposure;
 
     // Reassign the processed lighting to the color variable.
     color.rgb = finalRGB;
