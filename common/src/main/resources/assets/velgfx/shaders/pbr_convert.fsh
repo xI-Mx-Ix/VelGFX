@@ -8,19 +8,19 @@ layout (location = 0) out vec4 out_Albedo;
 // Target 1: The packed Specular map (LabPBR 1.3 Standard)
 layout (location = 1) out vec4 out_Specular;
 
-// --- Source Textures ---
+// Source Textures
 uniform sampler2D u_TexAlbedo;
 uniform sampler2D u_TexMR;        // glTF: Roughness (G), Metallic (B)
 uniform sampler2D u_TexOcclusion; // Occlusion (R)
 uniform sampler2D u_TexEmissive;
 
-// --- Texture Presence Flags ---
+// Texture Presence Flags
 uniform bool u_HasAlbedo;
 uniform bool u_HasMR;
 uniform bool u_HasOcclusion;
 uniform bool u_HasEmissive;
 
-// --- PBR Factors ---
+// PBR Factors
 uniform vec4 u_BaseColorFactor;
 uniform vec3 u_EmissiveFactor;
 uniform float u_RoughnessFactor;
@@ -39,10 +39,10 @@ uniform float u_OcclusionStrength;
  *   Alpha = Emissive Strength (0-254, linear, NOT 255)
  *
  * LabPBR 1.3 changes from 1.2:
- *   - F0 is now stored LINEARLY (not sqrt-encoded)
+ *   - F0 is now stored linearly (not sqrt-encoded)
  */
 void main() {
-    // --- 1. Fetch Source Values ---
+    // Fetch source values
 
     // Albedo: Factor * Texture (if present)
     vec4 baseColor = u_BaseColorFactor;
@@ -69,7 +69,7 @@ void main() {
         emissiveColor = texture(u_TexEmissive, v_UV).rgb;
     }
 
-    // --- 2. Calculate Final Albedo (MRT 0) ---
+    // Calculate final Albedo (MRT 0)
 
     // Apply Ambient Occlusion using glTF formula
     // Formula: Color * mix(1.0, AO, occlusionStrength)
@@ -82,18 +82,18 @@ void main() {
 
     out_Albedo = vec4(albedoRgb, baseColor.a);
 
-    // --- 3. Calculate LabPBR 1.3 Specular Map (MRT 1) ---
+    // Calculate LabPBR 1.3 Specular Map (MRT 1)
 
     // Apply glTF factors
-    float linearRoughness = clamp(mrSample.r * u_RoughnessFactor, 0.0, 1.0);
-    float metallic = clamp(mrSample.g * u_MetallicFactor, 0.0, 1.0);
+    float linearRoughness = clamp(mrSample.x * u_RoughnessFactor, 0.0, 1.0);
+    float metallic = clamp(mrSample.y * u_MetallicFactor, 0.0, 1.0);
 
-    // === RED CHANNEL: Perceptual Smoothness ===
+    // Red channel: Perceptual Smoothness
     // LabPBR 1.3: perceptualSmoothness = 1.0 - sqrt(linearRoughness)
-    // This is the INVERSE of: linearRoughness = pow(1.0 - perceptualSmoothness, 2.0)
+    // This is the inverse of: linearRoughness = pow(1.0 - perceptualSmoothness, 2.0)
     float perceptualSmoothness = 1.0 - sqrt(linearRoughness);
 
-    // === GREEN CHANNEL: F0 / Reflectance (or Metal ID) ===
+    // Green channel: F0 / Reflectance (or Metal ID)
     // glTF uses metallic workflow: metallic=0 → dielectric, metallic=1 → conductor
     // For LabPBR we need to encode F0 or use hardcoded metal values (230-255)
 
@@ -103,6 +103,8 @@ void main() {
         // Material is metallic
         // Use hardcoded metal value 255 (albedo-based F0)
         // This tells LabPBR shaders to use albedo as F0
+        // Note: Values 230-254 are reserved for specific metals (Iron, Gold, etc.)
+        // but glTF doesn't provide this information, so we default to 255
         f0_channel = 255.0;
     } else {
         // Material is dielectric
@@ -110,7 +112,6 @@ void main() {
         // glTF spec: F0 = 0.04 for dielectrics
         // LabPBR stores F0 linearly in range [0, 229] → value/255
         // F0 = 0.04 → store as: 0.04 * 229 ≈ 9.16 → ~9
-        // For better quality, we use a slightly higher default of 0.04
         float dielectricF0 = 0.04; // Standard dielectric F0
 
         // Map to LabPBR range [0, 229]
@@ -118,13 +119,13 @@ void main() {
         f0_channel = dielectricF0 * 229.0;
     }
 
-    // === BLUE CHANNEL: Porosity/SSS ===
+    // Blue channel: Porosity/SSS
     // Set to 0 for standard materials (no porosity, no subsurface scattering)
     float porosity_sss = 0.0;
 
-    // === ALPHA CHANNEL: Emissive Strength ===
+    // Alpha channel: Emissive Strength
     // LabPBR 1.3: Linear storage, range [0, 254]
-    // IMPORTANT: Value 255 is RESERVED and will be ignored by shaders!
+    // Important: Value 255 is reserved and will be ignored by shaders
 
     vec3 finalEmissive = emissiveColor * u_EmissiveFactor;
 
@@ -134,11 +135,11 @@ void main() {
     // Map to LabPBR range [0, 254] and store linearly
     float emissiveStrength = clamp(emissiveLuma * 254.0, 0.0, 254.0);
 
-    // === Output LabPBR 1.3 Specular Map ===
+    // Output LabPBR 1.3 Specular Map
     out_Specular = vec4(
-    perceptualSmoothness,  // Red: Perceptual smoothness
-    f0_channel / 255.0,    // Green: F0 (normalized to [0,1] for texture storage)
-    porosity_sss / 255.0,  // Blue: Porosity/SSS (normalized)
-    emissiveStrength / 255.0  // Alpha: Emissive strength (normalized, max 254)
+    perceptualSmoothness,       // Red: Perceptual smoothness
+    f0_channel / 255.0,         // Green: F0 (normalized to [0,1] for texture storage)
+    porosity_sss / 255.0,       // Blue: Porosity/SSS (normalized)
+    emissiveStrength / 255.0    // Alpha: Emissive strength (normalized, max 254)
     );
 }
