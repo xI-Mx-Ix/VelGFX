@@ -4,7 +4,7 @@
  */
 package net.xmx.velgfx.renderer.model;
 
-import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.VelGFX;
 import net.xmx.velgfx.renderer.gl.shader.impl.VxSkinningShader;
 import net.xmx.velgfx.renderer.model.loader.gltf.VxGltfLoader;
 import net.xmx.velgfx.resources.VxResourceLocation;

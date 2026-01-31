@@ -6,7 +6,7 @@ package net.xmx.velgfx.renderer.pipeline;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
-import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.VelGFX;
 import net.xmx.velgfx.renderer.gl.VxGlState;
 import net.xmx.velgfx.renderer.gl.VxIndexBuffer;
 import net.xmx.velgfx.renderer.gl.material.VxMaterial;

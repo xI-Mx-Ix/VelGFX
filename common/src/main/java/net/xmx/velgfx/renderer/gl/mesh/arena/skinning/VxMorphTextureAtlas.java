@@ -5,7 +5,7 @@
 package net.xmx.velgfx.renderer.gl.mesh.arena.skinning;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.VelGFX;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.*;
 

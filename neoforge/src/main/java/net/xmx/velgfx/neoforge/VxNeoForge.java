@@ -5,7 +5,7 @@
 package net.xmx.velgfx.neoforge;
 
 import net.neoforged.fml.common.Mod;
-import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.VelGFX;
 
 /**
  * Main class for NeoForge integration.

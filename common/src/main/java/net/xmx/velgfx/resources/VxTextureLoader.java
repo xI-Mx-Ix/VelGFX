@@ -5,7 +5,7 @@
 package net.xmx.velgfx.resources;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.VelGFX;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 import org.lwjgl.opengl.GL30;

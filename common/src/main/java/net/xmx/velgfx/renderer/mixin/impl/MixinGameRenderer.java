@@ -5,7 +5,7 @@
 package net.xmx.velgfx.renderer.mixin.impl;
 
 import net.minecraft.client.renderer.GameRenderer;
-import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.VelGFX;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;

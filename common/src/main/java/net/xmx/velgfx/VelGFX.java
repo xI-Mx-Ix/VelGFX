@@ -2,7 +2,7 @@
  * This file is part of VelGFX.
  * Licensed under LGPL 3.0.
  */
-package net.xmx.velgfx.renderer;
+package net.xmx.velgfx;
 
 import net.xmx.velgfx.renderer.gl.shader.VxShaderManager;
 import org.apache.logging.log4j.LogManager;

@@ -5,7 +5,7 @@
 package net.xmx.velgfx.renderer.gl.mesh.arena;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.VelGFX;
 import net.xmx.velgfx.renderer.gl.VxDrawCommand;
 import net.xmx.velgfx.renderer.gl.VxIndexBuffer;
 import net.xmx.velgfx.renderer.gl.VxVertexBuffer;

@@ -5,7 +5,7 @@
 package net.xmx.velgfx.renderer.gl.shader;
 
 import com.mojang.blaze3d.systems.RenderSystem;
-import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.VelGFX;
 import net.xmx.velgfx.renderer.util.VxGlGarbageCollector;
 import net.xmx.velgfx.resources.VxResourceLocation;
 import net.xmx.velgfx.resources.VxShaderResourceLoader;

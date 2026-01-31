@@ -4,7 +4,7 @@
  */
 package net.xmx.velgfx.renderer.gl.material;
 
-import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.VelGFX;
 import net.xmx.velgfx.renderer.gl.state.VxBlendMode;
 import net.xmx.velgfx.renderer.gl.state.VxRenderType;
 import net.xmx.velgfx.resources.VxResourceLocation;

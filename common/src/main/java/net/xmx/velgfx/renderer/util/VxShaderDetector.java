@@ -4,7 +4,7 @@
  */
 package net.xmx.velgfx.renderer.util;
 
-import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.VelGFX;
 
 import java.lang.reflect.Method;
 

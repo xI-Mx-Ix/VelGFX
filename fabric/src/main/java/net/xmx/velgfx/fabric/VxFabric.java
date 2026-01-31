@@ -5,7 +5,6 @@
 package net.xmx.velgfx.fabric;
 
 import net.fabricmc.api.ClientModInitializer;
-import net.xmx.velgfx.renderer.VelGFX;
 
 /**
  * Main class for Fabric integration.

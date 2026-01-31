@@ -4,7 +4,7 @@
  */
 package net.xmx.velgfx.resources;
 
-import net.xmx.velgfx.renderer.VelGFX;
+import net.xmx.velgfx.VelGFX;
 
 import java.io.BufferedReader;
 import java.io.IOException;
